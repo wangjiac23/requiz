@@ -2,9 +2,9 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v0.0.0（首个可用版本：CLI 读取 / 解析 / 分部分输出题目）
+- 版本：v1.0.0（CLI + Localhost 网页 + JSON API）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
-- 运行环境：CLI
+- 运行环境：CLI + Localhost
 
 ## 产品背景
 
@@ -16,11 +16,16 @@
 
 requiz 是一个**题库管理系统**，不是题库平台。题目不是目的，学习才是目的。
 
-## 已实现功能（v0.0.0）
+## 已实现功能
 
+**v0.0.0（CLI）**
 1. 连接题库文件夹（bank）
 2. 打开并读取题目文件（Markdown + YAML 元数据）
 3. 按需显示题目不同部分（题干 / 答案 / 解析 / 备注）
+
+**v1.0.0（Localhost）**
+4. 网页浏览题库（题目列表 + 详情）
+5. JSON API（/api/questions、/api/question?id=）
 
 ## 快速开始
 
@@ -39,6 +44,11 @@ go build -o dist/requiz.exe ./src
 
 # 4. 按需显示（缺省显示题干；可用 --a/--e/--n 组合）
 ./dist/requiz.exe view M001 demo/题库A --a --e
+
+# 5. 启动 localhost 网页服务（v1.0.0）
+./dist/requiz.exe serve demo/题库A -port 8080
+# 浏览器打开 http://127.0.0.1:8080/ 查看题库
+# JSON API：http://127.0.0.1:8080/api/questions
 ```
 
 ## 项目结构

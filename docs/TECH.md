@@ -71,9 +71,10 @@ requiz/
 | 命令 | 说明 |
 |------|------|
 | `requiz connect <bank>` | 连接题库文件夹，验证 / 生成 `.requiz/` 配置 |
-| `requiz list` | 列出当前题库所有题目（id + 标题） |
-| `requiz read <id> [--yaml]` | 读取单题全文（可附加元数据） |
-| `requiz view <id> [--a --e --n]` | 按需显示：缺省题干，`--a` 答案 `--e` 解析 `--n` 备注 |
+| `requiz list [bank]` | 列出题库所有题目（id + 标题） |
+| `requiz read <id> [bank]` | 读取单题全文（可附加元数据） |
+| `requiz view <id> [bank] [--a --e --n --yaml]` | 按需显示：缺省题干，`--a` 答案 `--e` 解析 `--n` 备注 |
+| `requiz serve [bank] [-port]` | 启动 localhost Web 服务（v1.0.0 新增） |
 
 ## 6. 难度与重要性约定
 
@@ -83,5 +84,17 @@ requiz/
 
 ## 7. 路线图
 
-- **v1.0.0**：CLI + Localhost
+- **v1.0.0** ✅：CLI + Localhost
 - **v2.0.0**：引入 Agent
+
+---
+
+## V1.0.0（CLI + Localhost）
+
+1. 技术栈：Go + Obsidian md 文件（同 v0.0.0，零第三方依赖）
+2. 运行环境：CLI + Localhost
+3. 新增：
+   - `requiz serve [题库目录] [-port 端口]`：启动 Web 服务（默认 `127.0.0.1:8080`）
+   - 首页 `/`：题库信息 + 题目列表（点击进入详情）
+   - 详情 `/question?id=<id>`：YAML 元数据标签 + 题干/答案/解析/备注
+   - JSON API：`/api/questions`（全部题目）、`/api/question?id=<id>`（单题），为组卷/Agent 预留

@@ -28,6 +28,12 @@ cd requiz
 
 # 5. 只看题干
 ./dist/requiz.exe view M001 demo/题库A
+
+# 6. 启动 localhost 网页服务（v1.0.0）
+./dist/requiz.exe serve demo/题库A -port 8080
+# 浏览器打开 http://127.0.0.1:8080/ ，可见题目列表与详情
+# JSON API：http://127.0.0.1:8080/api/questions
+#          http://127.0.0.1:8080/api/question?id=M001
 ```
 
 预期输出示例（view M001 demo/题库A）：
