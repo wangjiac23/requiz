@@ -2,6 +2,7 @@
 package main
 
 import (
+	"requiz/src/parser"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func writeTemp(t *testing.T, content string) string {
 }
 
 func TestParseFrontMatter(t *testing.T) {
-	q, err := parseQuestion(writeTemp(t, sample))
+	q, err := parser.ParseQuestion(writeTemp(t, sample))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestParseFrontMatter(t *testing.T) {
 }
 
 func TestParseSections(t *testing.T) {
-	q, err := parseQuestion(writeTemp(t, sample))
+	q, err := parser.ParseQuestion(writeTemp(t, sample))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestParseSections(t *testing.T) {
 }
 
 func TestIDFallback(t *testing.T) {
-	q, err := parseQuestion(writeTemp(t, "## 题目\n内容\n"))
+	q, err := parser.ParseQuestion(writeTemp(t, "## 题目\n内容\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

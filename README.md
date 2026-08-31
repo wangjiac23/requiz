@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v1.5.2（CLI + Localhost 网页 + 导航分区 + 组卷导出）
+- 版本：v1.6.0（CLI + Localhost 网页 + 模块化代码）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -99,6 +99,14 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 
 **v1.5.2（修订）**
 42. 导出后文件操作：📂 打开（默认程序）/ 📍 定位（资源管理器 /select），仅限 output/ 目录（越权拒绝）
+
+**v1.5.3（修订）**
+43. 修复导出 HTML 公式不渲染：KaTeX JS 内嵌进导出文件（file:// 下外部 JS 被安全策略禁止），公式自包含渲染
+
+**V1.6.0（代码模块化）**
+44. server.go（2534 行）拆分为 8 个模块源文件：store/api/config_api/favorites/export/web/views/assets
+45. JS 前端资源（indexJS/indexCSS）抽取为 assets.go 独立 Go 文件
+46. 5 包分层：model/parser/config/quiz/web + main 收口（依赖单向无循环）
 
 ## 快速开始
 

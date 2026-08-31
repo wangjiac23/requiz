@@ -2,11 +2,12 @@
 package main
 
 import (
+	"requiz/src/web"
 	"fmt"
 	"os"
 )
 
-const version = "1.5.2"
+const version = "1.6.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -25,7 +26,7 @@ func main() {
 	case "view":
 		err = cmdView(os.Args[2:])
 	case "serve":
-		err = cmdServe(os.Args[2:])
+		err = web.Serve(os.Args[2:])
 	case "version":
 		fmt.Printf("requiz v%s\n", version)
 	case "help", "-h", "--help":

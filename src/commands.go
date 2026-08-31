@@ -2,13 +2,15 @@
 package main
 
 import (
+	"requiz/src/model"
+	"requiz/src/quiz"
 	"fmt"
 	"path/filepath"
 	"strings"
 )
 
 // currentBank 按传入参数获取连接好的题库
-func currentBank(args []string) (*Bank, error) {
+func currentBank(args []string) (*model.Bank, error) {
 	dir := "."
 	if len(args) > 1 {
 		return nil, fmt.Errorf("connect 只接受一个题库目录参数")
@@ -16,7 +18,7 @@ func currentBank(args []string) (*Bank, error) {
 	if len(args) == 1 {
 		dir = args[0]
 	}
-	return connectBank(dir)
+	return quiz.ConnectBank(dir)
 }
 
 // cmdConnect 连接题库文件夹
@@ -46,7 +48,7 @@ func cmdList(args []string) error {
 	if len(args) == 1 {
 		dir = args[0]
 	}
-	bank, err := connectBank(dir)
+	bank, err := quiz.ConnectBank(dir)
 	if err != nil {
 		return err
 	}
@@ -71,11 +73,11 @@ func cmdRead(args []string) error {
 	if len(args) == 2 {
 		dir = args[1]
 	}
-	bank, err := connectBank(dir)
+	bank, err := quiz.ConnectBank(dir)
 	if err != nil {
 		return err
 	}
-	q, err := bank.find(args[0])
+	q, err := bank.Find(args[0])
 	if err != nil {
 		return err
 	}
@@ -133,11 +135,11 @@ func cmdView(args []string) error {
 	if dir == "" {
 		dir = "."
 	}
-	bank, err := connectBank(dir)
+	bank, err := quiz.ConnectBank(dir)
 	if err != nil {
 		return err
 	}
-	q, err := bank.find(key)
+	q, err := bank.Find(key)
 	if err != nil {
 		return err
 	}

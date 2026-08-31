@@ -104,7 +104,9 @@ requiz/
 - **v1.5.0** ✅：左侧导航三分区（题库/收藏/清单）+ 自定义清单组卷 + 筛选选题导出（JSON/HTML）
 - **v1.5.1** ✅（修订）：修复收藏星标刷新不显示（favorites 带 bank 参数 + dir 字段）
 - **v1.5.2** ✅（修订）：导出文件操作（📂 打开默认程序 / 📍 资源管理器定位，output 内校验）
-- **v1.6.0** 📝：在线测试模式（时间/客观题分数/主观题 AI 评/记录）
+- **v1.5.3** ✅（修订）：导出 HTML 内嵌 KaTeX JS，公式自包含渲染（file:// 安全限制修复）
+- **v1.6.0** ✅：serve 代码模块化——JS 功能 Go 源文件组织（server.go 拆分为 8 模块，前端资源 assets.go）
+- **v1.7.0** 🚧：在线测试模式（文件夹导航/题组/计分计时/自动评/报告）
 - **v2.0.0**：引入 Agent（组卷/批改/学情分析/pi 集成）
 
 ---
@@ -244,3 +246,36 @@ requiz/
 ### V1.5.0 修订
 1. v1.5.1 修复收藏星标刷新不显示：`GET /api/favorites` 前端带 `bank` 参数（切换题库后正确）；后端补回 `dir` 字段；前端收藏 key 统一用 `state.bank + "|" + id`
 2. v1.5.2 导出文件操作：`POST /api/export/open` 支持 `action=open`（默认程序打开）/ `select`（explorer /select 定位）；仅限 `output/` 目录内（Rel 校验，越权 403）
+3. v1.5.3 导出 HTML 公式渲染：KaTeX JS（katex.min.js + auto-render）内嵌进导出文件（file:// 下浏览器禁止外部 JS 加载）；CSS 相对引用 `../web/katex/`；实测 9 公式渲染
+
+---
+
+## V1.6.0（serve 代码模块化：JS 功能 Go 源文件组织）
+
+1. 目标：将 server.go（1500+ 行大杂烩）按职责拆分为多个 Go 源文件，功能零变化
+2. 拆分方案：
+   - `store.go`：Store 结构、newStore、addLink、migrateProjectLinks、containsStr
+   - `api.go`：核心查询 API（banks/tree/questions/question/link）
+   - `config_api.go`：配置 API（config/global/project、meta-values）
+   - `favorites.go`：收藏 + 清单 API
+   - `export.go`：导出模块（JSON/HTML、打开/定位）
+   - `web.go`：cmdServe/parseServeArgs/indexHandler/questionHandler + indexTpl/questionTpl
+   - `views.go`：视图模型与转换（questSummary/treeOf/toJSON/firstLine/writeJSON）
+   - `assets.go`：前端资源常量（indexJS/indexCSS）
+3. 同包 main 共享类型/函数，无 import 变化；模板/CSS/JS 常量整体迁移
+4. 验收：go vet/test/build 通过；页面渲染与交互零回归
+5. 5 包深化：`model`（数据模型）/`parser`（解析）/`config`（配置）/`quiz`（题库连接）/`web`（HTTP 服务）；main 收口 CLI；依赖单向（main→quiz→parser→model、config→model、web→全部）
+
+---
+
+## V1.7.0（文件夹导航 + 题组 + 在线测试模式）
+
+1. 技术栈：同 v1.6.x（5 包结构 + 前端原生 JS）
+2. 新增功能：
+   - **任意层级文件夹导航**：导航树严格按文件系统目录结构嵌套（多级展开收起）；点击目录主区域只显示该目录题目，Ctrl 多选合并，点空白取消
+   - **题组**：原「清单」升级为题组（文件夹样式，含题目元数据引用，题目本体在题库）；题组旁「测试」按钮
+   - **在线测试模式**：主区域只显示题组题目 + 答题区；可设计分/不计分、正计时/倒计时/不计时
+   - **评分**：客观题（选择/填空）自动比对判分，主观题（解答）显示参考答案由用户评分
+   - **测试报告**：每次测试生成报告（对错/得分/用时/总得分），可查看与导出
+3. 结构变动：/api/tree 返回嵌套目录树；项目配置 lists 语义为题组；前端 state.selDirs（目录多选）+ state.testing（测试态）；评分与报告前端汇总
+4. 兼容：既有功能无回归

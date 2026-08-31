@@ -1,5 +1,5 @@
 // 题库（bank）连接与扫描
-package main
+package quiz
 
 import (
 	"fmt"
@@ -7,21 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
 
-// Bank 题库
-type Bank struct {
-	Dir       string // 题库目录
-	Name      string // 题库名称（.requiz/config.yaml 的 bank 字段）
-	App       string // 运行软件
-	Links     []string
-	Questions []*Question
-}
+	"requiz/src/model"
+	"requiz/src/parser"
+)
 
 // connectBank 连接题库文件夹：
 // 验证目录存在、读取 .requiz/config.yaml、扫描目录下所有题目 md 文件
 // 统一使用绝对路径（保证题库对等比较与配置一致性）
-func connectBank(dir string) (*Bank, error) {
+func ConnectBank(dir string) (*model.Bank, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("题库目录解析失败: %s（%w）", dir, err)
@@ -34,7 +28,7 @@ func connectBank(dir string) (*Bank, error) {
 		return nil, fmt.Errorf("路径不是文件夹: %s", abs)
 	}
 
-	bank := &Bank{Dir: abs, App: "requiz"}
+	bank := &model.Bank{Dir: abs, App: "requiz"}
 
 	// 读取 .requiz/config.yaml（容错：不存在也能连，只是没有配置信息）
 	cfgPath := filepath.Join(abs, ".requiz", "config.yaml")
@@ -90,8 +84,8 @@ func connectBank(dir string) (*Bank, error) {
 }
 
 // scanQuestions 递归扫描目录下所有 .md 题目文件（跳过 .requiz / .git）
-func scanQuestions(root string) ([]*Question, error) {
-	var qs []*Question
+func scanQuestions(root string) ([]*model.Question, error) {
+	var qs []*model.Question
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -103,28 +97,11 @@ func scanQuestions(root string) ([]*Question, error) {
 			return nil
 		}
 		if strings.HasSuffix(d.Name(), ".md") {
-			if q, err := parseQuestion(path); err == nil && q.isQuestion() {
+			if q, err := parser.ParseQuestion(path); err == nil && q.IsQuestion() {
 				qs = append(qs, q)
 			}
 		}
 		return nil
 	})
 	return qs, err
-}
-
-// find 按 id 或文件名查找题目；重复时提示指定题库目录
-func (b *Bank) find(key string) (*Question, error) {
-	var found []*Question
-	for _, q := range b.Questions {
-		if q.ID() == key || q.File == key || strings.TrimSuffix(q.File, ".md") == key {
-			found = append(found, q)
-		}
-	}
-	if len(found) == 0 {
-		return nil, fmt.Errorf("找不到题目: %s", key)
-	}
-	if len(found) > 1 {
-		return nil, fmt.Errorf("在多个题库目录找到题目 %s，请指定题库目录（如 requiz view %s demo）", key, key)
-	}
-	return found[0], nil
 }

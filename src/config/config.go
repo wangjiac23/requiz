@@ -1,5 +1,5 @@
 // 配置系统（V1.3.0）：全局配置（用户/.requiz）+ 项目配置（题库/.requiz）
-package main
+package config
 
 import (
 	"fmt"
@@ -7,39 +7,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"requiz/src/model"
 )
 
-// FieldDef 元数据字段定义（含可选值列表）
-type FieldDef struct {
-	Name   string   `json:"name"`
-	Label  string   `json:"label"`
-	Values []string `json:"values"`
-}
-
-// GlobalConfig 全局配置（用户级：字段定义 + 链接题库 + 默认配置）
-type GlobalConfig struct {
-	Defaults   map[string]string
-	MetaFields []FieldDef
-	Links      []string
-	Favorites  []string // 收藏（"题库目录|题目ID"）
-}
-
-// QuestionList 自定义题目清单（组卷）
-type QuestionList struct {
-	Name string
-	IDs  []string
-}
-
-// ProjectConfig 项目（题库）配置（bank/app + 该题库自定义字段）
-type ProjectConfig struct {
-	App         string
-	Bank        string
-	Version     string
-	QuestionDir string
-	MetaFields  []FieldDef
-	Favorites   []string // 收藏题目 id（V1.5.0）
-	Lists       []QuestionList
-}
 
 // ---------- 路径 ----------
 
@@ -51,23 +22,23 @@ func globalConfigDir() string {
 	return filepath.Join(home, ".requiz")
 }
 
-func globalConfigPath() string {
+func GlobalConfigPath() string {
 	return filepath.Join(globalConfigDir(), "config.yaml")
 }
 
-func projectConfigPath(dir string) string {
+func ProjectConfigPath(dir string) string {
 	return filepath.Join(dir, ".requiz", "config.yaml")
 }
 
 // ---------- 全局配置 ----------
 
-// defaultGlobalConfig 返回全局配置默认模板（系统属性 + 可选属性字段定义）
-func defaultGlobalConfig() GlobalConfig {
-	return GlobalConfig{
+// DefaultGlobalConfig 返回全局配置默认模板（系统属性 + 可选属性字段定义）
+func DefaultGlobalConfig() model.GlobalConfig {
+	return model.GlobalConfig{
 		Defaults: map[string]string{
 			"port": "8080",
 		},
-		MetaFields: []FieldDef{
+		MetaFields: []model.FieldDef{
 			{Name: "chapter", Label: "章节", Values: []string{}},
 			{Name: "grade", Label: "年级", Values: []string{"高一", "高二", "高三"}},
 			{Name: "difficulty", Label: "难度", Values: []string{"★", "★★", "★★★"}},
@@ -80,14 +51,14 @@ func defaultGlobalConfig() GlobalConfig {
 	}
 }
 
-// readGlobalConfig 读取全局配置；不存在时创建默认模板
-func readGlobalConfig() (GlobalConfig, error) {
-	path := globalConfigPath()
+// ReadGlobalConfig 读取全局配置；不存在时创建默认模板
+func ReadGlobalConfig() (model.GlobalConfig, error) {
+	path := GlobalConfigPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		// 不存在：创建默认模板
-		g := defaultGlobalConfig()
-		if err := writeGlobalConfig(g); err != nil {
+		g := DefaultGlobalConfig()
+		if err := WriteGlobalConfig(g); err != nil {
 			return g, err
 		}
 		return g, nil
@@ -95,8 +66,8 @@ func readGlobalConfig() (GlobalConfig, error) {
 	return parseGlobalConfig(string(data)), nil
 }
 
-func parseGlobalConfig(data string) GlobalConfig {
-	g := GlobalConfig{Defaults: map[string]string{}}
+func parseGlobalConfig(data string) model.GlobalConfig {
+	g := model.GlobalConfig{Defaults: map[string]string{}}
 	section := ""
 	inField := false
 	inFieldValues := false
@@ -126,7 +97,7 @@ func parseGlobalConfig(data string) GlobalConfig {
 			inFieldValues = false
 			if strings.HasPrefix(trim, "- ") {
 				rest := strings.TrimSpace(trim[2:])
-				fd := FieldDef{}
+				fd := model.FieldDef{}
 				if idx := strings.Index(rest, ":"); idx > 0 {
 					fd.Name = strings.TrimSpace(rest[idx+1:])
 				}
@@ -152,7 +123,7 @@ func parseGlobalConfig(data string) GlobalConfig {
 	return g
 }
 
-func (g GlobalConfig) serialize() string {
+func serializeGlobal(g model.GlobalConfig) string {
 	var b strings.Builder
 	b.WriteString("# requiz 全局配置（用户级）\n")
 	b.WriteString("# 字段定义：系统属性 + 可选属性元数据字段\n\n")
@@ -195,19 +166,19 @@ func (g GlobalConfig) serialize() string {
 	return b.String()
 }
 
-func writeGlobalConfig(g GlobalConfig) error {
+func WriteGlobalConfig(g model.GlobalConfig) error {
 	dir := globalConfigDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(globalConfigPath(), []byte(g.serialize()), 0644)
+	return os.WriteFile(GlobalConfigPath(), []byte(serializeGlobal(g)), 0644)
 }
 
 // ---------- 项目配置 ----------
 
 // parseProjectConfig 解析题库 .requiz/config.yaml（bank/app/version/questions_dir/meta_fields/favorites/lists）
-func parseProjectConfig(data string) ProjectConfig {
-	p := ProjectConfig{}
+func parseProjectConfig(data string) model.ProjectConfig {
+	p := model.ProjectConfig{}
 	section := ""
 	inField := false
 	inFieldValues := false
@@ -246,7 +217,7 @@ func parseProjectConfig(data string) ProjectConfig {
 			inListIDs = false
 			if strings.HasPrefix(trim, "- ") {
 				rest := strings.TrimSpace(trim[2:])
-				ql := QuestionList{}
+				ql := model.QuestionList{}
 				if idx := strings.Index(rest, ":"); idx > 0 {
 					ql.Name = strings.TrimSpace(rest[idx+1:])
 				}
@@ -263,7 +234,7 @@ func parseProjectConfig(data string) ProjectConfig {
 			inFieldValues = false
 			if strings.HasPrefix(trim, "- ") {
 				rest := strings.TrimSpace(trim[2:])
-				fd := FieldDef{}
+				fd := model.FieldDef{}
 				if idx := strings.Index(rest, ":"); idx > 0 {
 					fd.Name = strings.TrimSpace(rest[idx+1:])
 				}
@@ -289,7 +260,7 @@ func parseProjectConfig(data string) ProjectConfig {
 	return p
 }
 
-func (p ProjectConfig) serialize() string {
+func serializeProject(p model.ProjectConfig) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "app: %s\n", p.App)
 	fmt.Fprintf(&b, "bank: %s\n", p.Bank)
@@ -335,29 +306,29 @@ func (p ProjectConfig) serialize() string {
 	return b.String()
 }
 
-func writeProjectConfig(dir string, p ProjectConfig) error {
+func WriteProjectConfig(dir string, p model.ProjectConfig) error {
 	cfgDir := filepath.Join(dir, ".requiz")
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(projectConfigPath(dir), []byte(p.serialize()), 0644)
+	return os.WriteFile(ProjectConfigPath(dir), []byte(serializeProject(p)), 0644)
 }
 
-// readProjectConfig 读取题库项目配置（文件不存在时返回空）
-func readProjectConfig(dir string) (ProjectConfig, error) {
-	path := projectConfigPath(dir)
+// ReadProjectConfig 读取题库项目配置（文件不存在时返回空）
+func ReadProjectConfig(dir string) (model.ProjectConfig, error) {
+	path := ProjectConfigPath(dir)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ProjectConfig{}, nil
+		return model.ProjectConfig{}, nil
 	}
 	return parseProjectConfig(string(data)), nil
 }
 
 // ---------- 字段定义合并 ----------
 
-// mergeFieldDefs 合并全局字段与项目字段（同名取并集 values，项目 label 优先）
-func mergeFieldDefs(global, project []FieldDef) []FieldDef {
-	merged := []FieldDef{}
+// MergeFieldDefs 合并全局字段与项目字段（同名取并集 values，项目 label 优先）
+func MergeFieldDefs(global, project []model.FieldDef) []model.FieldDef {
+	merged := []model.FieldDef{}
 	byName := map[string]int{}
 	for _, f := range global {
 		merged = append(merged, f)
