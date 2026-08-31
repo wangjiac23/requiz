@@ -92,7 +92,7 @@ func apiListsHandler(s *Store) http.HandlerFunc {
 			qs := []map[string]any{}
 			for _, id := range l.IDs {
 				if q, err := b.Find(id); err == nil {
-					qs = append(qs, map[string]any{"id": q.ID(), "title": firstLine(q.Prompt), "meta": q.Meta})
+					qs = append(qs, map[string]any{"id": q.ID(), "title": firstLine(q.Prompt), "prompt": q.Prompt, "answer": q.Answer, "meta": q.Meta})
 				}
 			}
 			out = append(out, map[string]any{"name": l.Name, "ids": l.IDs, "count": len(qs), "questions": qs})

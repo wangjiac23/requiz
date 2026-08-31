@@ -87,6 +87,8 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #displayModal.show{display:flex}
 #exportModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #exportModal.show{display:flex}
+#testSetupModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#testSetupModal.show{display:flex}
 #displayList{display:flex;flex-direction:column;gap:4px;margin:10px 0}
 #displayList label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 #editModal .modal-box{width:560px;max-width:92%;max-height:85vh;overflow-y:auto}
@@ -117,6 +119,16 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 .ans-input{width:100%;max-width:400px;padding:8px;margin-top:6px;border:1px solid var(--border);border-radius:6px;font-size:14px}
 .ans-textarea{width:100%;padding:8px;margin-top:6px;border:1px solid var(--border);border-radius:6px;font-size:14px;resize:vertical;font-family:inherit}
 .test-done{margin:16px auto;display:block;padding:10px 30px;font-size:14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer}
+.test-timer{font-weight:bold;color:var(--accent)}
+.grade{font-size:13px;font-weight:bold;margin-left:8px}
+.grade.right{color:#1a7f37}
+.grade.wrong{color:#d1242f}
+.report-ans{margin-top:8px;font-size:13px;color:var(--muted)}
+.report-ref{margin-top:6px;font-size:13px}
+.report-ref .content{background:var(--sidebar);padding:8px;border-radius:6px;margin-top:4px}
+.report-grade{margin-top:8px;font-size:13px}
+.subj-score{width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;margin:0 6px}
+.subj-ok{padding:4px 12px;font-size:12px}
 .modal-box{background:var(--panel);border-radius:10px;padding:20px;width:420px;max-width:90%}
 #modal .modal-box h4{margin:10px 0 6px;font-size:13px;color:var(--text)}
 .cfg-tabs{display:flex;gap:6px;margin-bottom:10px}
@@ -137,7 +149,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [], testing: null };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [], testing: null, pendingTest: null, timerInt: null };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -195,6 +207,9 @@ function init(){
   qs("#exportBtn").onclick = openExport;
   qs("#saveListBtn").onclick = saveSelectedAsList;
   qs("#exportOk").onclick = doExport;
+  qs("#tsOk").onclick = confirmTestSetup;
+  qs("#tsCancel").onclick = function(){ qs("#testSetupModal").classList.remove("show"); state.pendingTest = null; };
+  qs("#tsTimer").onchange = function(){ qs("#tsMinWrap").hidden = (this.value !== "countdown"); };
   qs("#exportCancel").onclick = closeExport;
   qs("#displayBtn").onclick = openDisplay;
   qs("#displayOk").onclick = saveDisplay;
@@ -444,11 +459,49 @@ function renderListsSidebar(sb){
 
 // ---------- V1.7.0：在线测试模式（批次 B：答题基础） ----------
 
-// 开始测试（题组 → 测试模式）
+// 开始测试：先弹测试设置（计分/计时）
 function startTest(list){
-  state.testing = {name: list.name, qs: (list.questions || []), answers: {}};
+  state.pendingTest = list;
+  qs("#testSetupName").textContent = "（" + list.name + " · " + (list.questions||[]).length + " 题）";
+  qs("#testSetupModal").classList.add("show");
+}
+
+// 确认设置并开始
+function confirmTestSetup(){
+  var list = state.pendingTest;
+  var scored = qs("#tsScored").value === "1";
+  var timerType = qs("#tsTimer").value;
+  var minutes = parseInt(qs("#tsMinutes").value, 10) || 10;
+  state.testing = {
+    name: list.name, qs: (list.questions || []), answers: {},
+    scored: scored, timerType: timerType, minutes: minutes,
+    elapsed: 0, remainMs: (timerType === "countdown" ? minutes * 60000 : 0), report: null
+  };
   state.sideTab = "tree";
+  qs("#testSetupModal").classList.remove("show");
+  if (state.timerInt) clearInterval(state.timerInt);
+  state.timerInt = setInterval(tickTimer, 1000);
   renderTest();
+}
+
+// 计时器每秒
+function tickTimer(){
+  if (!state.testing || state.testing.report) return;
+  if (state.testing.timerType === "countup") {
+    state.testing.elapsed++;
+    var el = qs("#testTimer");
+    if (el) el.textContent = "⏲ " + fmtTime(state.testing.elapsed);
+  } else if (state.testing.timerType === "countdown") {
+    state.testing.remainMs -= 1000;
+    var el2 = qs("#testTimer");
+    if (el2) el2.textContent = "⏳ " + fmtTime(Math.ceil(state.testing.remainMs / 1000));
+    if (state.testing.remainMs <= 0) finishTest();
+  }
+}
+
+function fmtTime(sec){
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
 }
 
 // 渲染测试（主区域只显示题目 + 答题区）
@@ -459,10 +512,12 @@ function renderTest(){
   if (!t) return;
   var bar = document.createElement("div");
   bar.className = "test-bar";
-  bar.innerHTML = "<b>🧪 测试：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题</span>";
+  bar.innerHTML = "<b>🧪 测试：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题</span>" +
+    (t.scored ? " <span class='cnt'>计分</span>" : " <span class='cnt'>不计分</span>");
+  if (t.timerType !== "none") bar.innerHTML += ' <span id="testTimer" class="test-timer">' + (t.timerType === "countdown" ? "⏳ " + fmtTime(Math.ceil(t.remainMs/1000)) : "⏲ 0:00") + "</span>";
   var exitBtn = document.createElement("button");
   exitBtn.textContent = "✕ 退出";
-  exitBtn.onclick = function(){ state.testing = null; renderMain(); };
+  exitBtn.onclick = function(){ state.testing = null; clearInterval(state.timerInt); renderMain(); };
   bar.appendChild(exitBtn);
   main.appendChild(bar);
   if (t.qs.length === 0) { main.innerHTML += '<div class="empty">题组为空</div>'; return; }
@@ -478,15 +533,131 @@ function renderTest(){
     main.appendChild(card);
     renderMath(card);
   });
-  // 完成按钮（批次 B 先提交答案预览，批次 C 评分）
   var done = document.createElement("button");
   done.className = "test-done";
   done.textContent = "✅ 完成测试";
-  done.onclick = function(){
-    collectAnswers();
-    alert("已收集 " + Object.keys(state.testing.answers).length + " 题答案（评分功能开发中）");
-  };
+  done.onclick = finishTest;
   main.appendChild(done);
+}
+
+// 完成测试：收集答案 → 评分 → 报告
+function finishTest(){
+  if (!state.testing || state.testing.report) return;
+  collectAnswers();
+  var t = state.testing;
+  if (t.timerType === "countup") t.elapsed = Math.round(t.elapsed);
+  else if (t.timerType === "countdown") t.elapsed = Math.round((t.minutes * 60000 - t.remainMs) / 1000);
+  clearInterval(state.timerInt);
+  t.report = true;
+  // 客观题自动评
+  t.qs.forEach(function(q){
+    var type = (q.meta && q.meta.type) || "";
+    if (type === "选择题" || type === "填空题") {
+      autoGrade(q);
+    }
+  });
+  renderReport();
+}
+
+// 客观题自动评分（比对参考答案，容错空白/量词/LaTeX）
+function autoGrade(q){
+  var t = state.testing;
+  var ans = (t.answers[q.id] || "").trim();
+  var ref = q.answer || "";
+  var ok = false;
+  var type = (q.meta && q.meta.type) || "";
+  if (type === "选择题") {
+    // 选项字母 → 选项文本比对
+    var opts = extractOptions(q.prompt || "");
+    var selText = "";
+    opts.forEach(function(o){ if (o.key === ans) selText = o.text; });
+    ok = gradeMatch(selText || ans, ref);
+  } else {
+    ok = gradeMatch(ans, ref);
+  }
+  q._grade = ok ? "对" : "错";
+  q._score = ok ? 10 : 0;
+  q._ref = ref;
+}
+
+// 容错比对：归一化后相等或互相包含
+function gradeMatch(userAns, refAns){
+  var u = normalizeAns(userAns), r = normalizeAns(refAns);
+  if (u === "" || r === "") return false;
+  if (u === r) return true;
+  if (u.length >= 2 && r.indexOf(u) >= 0) return true;
+  if (r.length >= 2 && u.indexOf(r) >= 0) return true;
+  return false;
+}
+
+function normalizeAns(s){
+  return s.replace(/[\s\n$\{}^_=()（）\[\]【】。，,.;；：:、/\|]/g, "").replace(/[个个道]/g, "").toLowerCase();
+}
+
+// 渲染报告
+function renderReport(){
+  var main = qs("#mainContent");
+  main.innerHTML = "";
+  var t = state.testing;
+  var scored = t.scored;
+  var correct = 0, totalScore = 0;
+  t.qs.forEach(function(q){ if (q._grade === "对") correct++; if (q._score) totalScore += q._score; });
+  var bar = document.createElement("div");
+  bar.className = "test-bar report-bar";
+  bar.innerHTML = "<b>📊 测试报告：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题 · 答对 " + correct + " 题" +
+    (t.timerType !== "none" ? " · 用时 " + fmtTime(t.elapsed) : "") +
+    (scored ? " · 得分 " + totalScore + " / " + (t.qs.length * 10) : "") + "</span>";
+  var backBtn = document.createElement("button");
+  backBtn.textContent = "← 返回";
+  backBtn.onclick = function(){ state.testing = null; clearInterval(state.timerInt); renderMain(); };
+  bar.appendChild(backBtn);
+  main.appendChild(bar);
+  t.qs.forEach(function(q, i){
+    var type = (q.meta && q.meta.type) || "";
+    var card = document.createElement("div");
+    card.className = "qbox";
+    var gradeHtml = q._grade ? '<span class="grade ' + (q._grade === "对" ? "right" : "wrong") + '">' + q._grade + (scored ? " (+" + q._score + ")" : "") + "</span>" : "";
+    var myAns = t.answers[q.id] ? esc(t.answers[q.id]) : "（未作答）";
+    card.innerHTML =
+      '<div class="qbox-head"><span class="qbox-id">' + (i + 1) + ". " + esc(q.id) + '</span>' + gradeHtml + "</div>" +
+      '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + "</div>" +
+      '<div class="report-ans"><b>我的答案：</b>' + myAns + "</div>";
+    if (type === "解答题") {
+      // 主观题：显示参考答案 + 用户评分
+      card.innerHTML += '<div class="report-ref"><b>参考答案：</b><div class="content">' + esc(q.answer || "（无）") + "</div></div>";
+      card.innerHTML += '<div class="report-grade"><b>主观评分（0-' + (scored ? 10 : 10) + "）</b> <input type='number' class='subj-score' data-id='" + esc(q.id) + "' min='0' max='10' value='" + (q._score || 0) + "'> <button class='subj-ok' data-id='" + esc(q.id) + "'>评分</button></div>";
+    } else {
+      card.innerHTML += '<div class="report-ref"><b>参考答案：</b>' + esc(q.answer || "（无）") + "</div>";
+    }
+    main.appendChild(card);
+    renderMath(card);
+  });
+  // 主观题评分按钮
+  main.querySelectorAll(".subj-ok").forEach(function(b){
+    b.onclick = function(){
+      var id = b.getAttribute("data-id");
+      var inp = main.querySelector('.subj-score[data-id="' + id + '"]');
+      var score = parseInt(inp.value, 10) || 0;
+      if (score > 10) score = 10;
+      b.textContent = "✅ " + score + " 分";
+      b.disabled = true;
+      updateTotal();
+    };
+  });
+  // 主观评分后更新总分
+  function updateTotal(){
+    var total = 0, subj = 0;
+    t.qs.forEach(function(q){ if (q._grade === "对") total += 10; });
+    main.querySelectorAll(".subj-ok").forEach(function(b){
+      if (b.disabled) {
+        var id = b.getAttribute("data-id");
+        var inp = main.querySelector('.subj-score[data-id="' + id + '"]');
+        subj += parseInt(inp.value, 10) || 0;
+      }
+    });
+    var tb = main.querySelector(".report-bar .cnt");
+    if (tb) tb.textContent = tb.textContent.replace(/· 得分 [\d]+ \/ [\d]+/, "· 得分 " + (total + subj) + " / " + (t.qs.length * 10));
+  }
 }
 
 // 答题区（按题型）

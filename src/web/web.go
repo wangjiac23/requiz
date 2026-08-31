@@ -268,6 +268,30 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     </div>
   </div>
 </div>
+<div id="testSetupModal" hidden>
+  <div class="modal-box" style="width:400px">
+    <h3>🧪 测试设置 <span id="testSetupName" class="meta"></span></h3>
+    <label class="lbl">计分</label>
+    <select id="tsScored" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
+      <option value="1">✅ 计分（每题 10 分）</option>
+      <option value="0">🚫 不计分</option>
+    </select>
+    <label class="lbl">计时</label>
+    <select id="tsTimer" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
+      <option value="none">⏱ 不计时</option>
+      <option value="countdown">⏳ 倒计时（分钟）</option>
+      <option value="countup">⏲ 正计时</option>
+    </select>
+    <div id="tsMinWrap" hidden>
+      <label class="lbl">倒计时时长（分钟）</label>
+      <input id="tsMinutes" type="number" min="1" max="180" value="10" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
+    </div>
+    <div class="modal-actions">
+      <button id="tsOk">开始测试</button>
+      <button id="tsCancel">取消</button>
+    </div>
+  </div>
+</div>
 <div id="exportModal" hidden>
   <div class="modal-box" style="width:380px">
     <h3>导出题目 <span id="exportCount" class="meta"></span></h3>
