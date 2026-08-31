@@ -12,20 +12,6 @@ import (
 	"time"
 )
 
-// piPath 定位 pi CLI（可被全局配置覆盖）
-func piPath() string {
-	candidates := []string{
-		"C:/nvm/v25.1.0/pi.cmd",
-		"pi",
-	}
-	for _, c := range candidates {
-		if _, err := exec.LookPath(c); err == nil {
-			return c
-		}
-	}
-	return "pi"
-}
-
 // POST /api/pi/chat {message} ：以当前题库为工作目录调用 pi，返回回复
 func apiPiChatHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -42,10 +28,19 @@ func apiPiChatHandler(s *Store) http.HandlerFunc {
 		}
 		// pi 工作目录 = 当前打开的题库目录
 		cwd := s.main.Dir
-		// 构造 pi 命令：pi --no-session -p <消息>（一次性问答）
+		// 构造 pi 命令：pi --no-session -p <消息>（一次性问答；可选模型）
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, piPath(), "--no-session", "-p", body.Message)
+		piPath := s.global.Pi.Path
+		if piPath == "" {
+			piPath = "pi"
+		}
+		var cmd *exec.Cmd
+		if s.global.Pi.Model != "" {
+			cmd = exec.CommandContext(ctx, piPath, "--no-session", "-m", s.global.Pi.Model, "-p", body.Message)
+		} else {
+			cmd = exec.CommandContext(ctx, piPath, "--no-session", "-p", body.Message)
+		}
 		cmd.Dir = cwd
 		out, err := cmd.CombinedOutput()
 		if err != nil {

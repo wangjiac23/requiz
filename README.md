@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v3.0.0（CLI + Localhost 网页 + Obsidian 插件 + pi AI）
+- 版本：v3.1.0（CLI + Localhost 网页 + Obsidian 插件 + pi AI）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -141,6 +141,11 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 **V3.0.0（requiz with pi）**
 63. 右侧聊天框集成 pi：以当前题库为工作目录对话（辅助解题/组卷/批改，特定功能后续插件+Skill）
 64. `POST /api/pi/chat`：exec pi CLI（`pi --no-session -p <消息>`，cwd=题库目录，90s 超时）
+
+**v3.1.0（修订）**
+65. 🤖 pi 按钮移至侧边栏头部；pi 面板可拖拽调宽（120~520px，拖到最窄隐藏）
+66. pi 回复中的 `$...$` 公式 KaTeX 渲染
+67. 设置面板新增 pi 配置（路径/模型，存全局配置 pi 节）
 
 ## 快速开始
 

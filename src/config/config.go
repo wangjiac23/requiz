@@ -38,6 +38,9 @@ func DefaultGlobalConfig() model.GlobalConfig {
 		Defaults: map[string]string{
 			"port": "8080",
 		},
+		Pi: model.PiConfig{
+			Path: "C:/nvm/v25.1.0/pi.cmd",
+		},
 		MetaFields: []model.FieldDef{
 			{Name: "chapter", Label: "章节", Values: []string{}},
 			{Name: "grade", Label: "年级", Values: []string{"高一", "高二", "高三"}},
@@ -84,6 +87,16 @@ func parseGlobalConfig(data string) model.GlobalConfig {
 				section = strings.TrimSpace(trim[:idx])
 				inField = false
 				inFieldValues = false
+			}
+		case indent == 2 && section == "pi":
+			if idx := strings.Index(trim, ":"); idx > 0 {
+				k := strings.TrimSpace(trim[:idx])
+				v := strings.TrimSpace(trim[idx+1:])
+				if k == "path" {
+					g.Pi.Path = v
+				} else if k == "model" {
+					g.Pi.Model = v
+				}
 			}
 		case indent == 2 && section == "links" && strings.HasPrefix(trim, "-"):
 			g.Links = append(g.Links, strings.TrimSpace(trim[1:]))
@@ -155,6 +168,15 @@ func serializeGlobal(g model.GlobalConfig) string {
 		b.WriteString("\nlinks:\n")
 		for _, l := range g.Links {
 			fmt.Fprintf(&b, "  - %s\n", l)
+		}
+	}
+	if g.Pi.Path != "" || g.Pi.Model != "" {
+		b.WriteString("\npi:\n")
+		if g.Pi.Path != "" {
+			fmt.Fprintf(&b, "  path: %s\n", g.Pi.Path)
+		}
+		if g.Pi.Model != "" {
+			fmt.Fprintf(&b, "  model: %s\n", g.Pi.Model)
 		}
 	}
 	if len(g.Favorites) > 0 {

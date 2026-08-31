@@ -14,6 +14,13 @@ type GlobalConfig struct {
 	MetaFields []FieldDef
 	Links      []string
 	Favorites  []string // 收藏（"题库目录|题目ID"）
+	Pi         PiConfig // V3.1.0：pi 配置
+}
+
+// PiConfig pi 集成配置（V3.1.0）
+type PiConfig struct {
+	Path  string // pi 可执行路径（默认 C:/nvm/v25.1.0/pi.cmd）
+	Model string // pi 模型（可选）
 }
 
 // QuestionList 自定义题目清单（组卷）

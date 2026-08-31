@@ -113,6 +113,7 @@ func apiConfigGlobalHandler(s *Store) http.HandlerFunc {
 			"meta_fields": gc.MetaFields,
 			"links":       gc.Links,
 			"favorites":   gc.Favorites,
+			"pi":          gc.Pi,
 		})
 	}
 }
@@ -127,6 +128,10 @@ func apiConfigGlobalSaveHandler(s *Store) http.HandlerFunc {
 		}
 		var body struct {
 			Links []string `json:"links"`
+			Pi    struct {
+				Path  string `json:"path"`
+				Model string `json:"model"`
+			} `json:"pi"` // V3.1.0
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 			http.Error(w, `{"error":"body 解析失败"}`, http.StatusBadRequest)
@@ -134,6 +139,8 @@ func apiConfigGlobalSaveHandler(s *Store) http.HandlerFunc {
 		}
 		gc := s.global
 		gc.Links = body.Links
+		gc.Pi.Path = body.Pi.Path
+		gc.Pi.Model = body.Pi.Model
 		// 保护：不允许移除当前打开的题库
 		if !containsStr(gc.Links, s.main.Dir) {
 			http.Error(w, `{"error":"不能移除当前打开的题库"}`, http.StatusBadRequest)

@@ -45,6 +45,8 @@ button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(-
 /* V3.0.0：pi 聊天面板 */
 #piPanel{width:0;min-width:0;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--border);transition:width .2s;overflow:hidden}
 #piPanel.open{width:340px;min-width:340px}
+#piResizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent}
+#piResizer:hover,#piResizer.active{background:var(--accent-bg)}
 #piPanelHead{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;border-bottom:1px solid var(--border);flex-shrink:0}
 #piPanelHead button{margin-left:auto;padding:2px 8px}
 #piMsgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;font-size:13px}
@@ -236,6 +238,24 @@ function init(){
   qs("#displayCancel").onclick = closeDisplay;
   // V3.0.0：pi 聊天面板
   qs("#piChatBtn").onclick = function(){ qs("#piPanel").classList.add("open"); qs("#piInput").focus(); };
+  // V3.1.0：pi 面板拖拽调宽（拖到最窄隐藏）
+  (function(){
+    var rz = qs("#piResizer"), p = qs("#piPanel"), sx = 0, sw = 0;
+    rz.addEventListener("mousedown", function(e){
+      sx = e.clientX; sw = p.offsetWidth;
+      rz.classList.add("active");
+      document.addEventListener("mousemove", mv);
+      document.addEventListener("mouseup", up);
+      e.preventDefault();
+    });
+    function mv(e){
+      var w = sw + (sx - e.clientX);
+      if (w < 120) { p.classList.remove("open"); up(); return; }
+      if (w > 520) w = 520;
+      p.style.width = w + "px";
+    }
+    function up(){ rz.classList.remove("active"); document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); }
+  })();
   qs("#piPanelClose").onclick = function(){ qs("#piPanel").classList.remove("open"); };
   qs("#piSend").onclick = sendPiMsg;
   qs("#piInput").addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPiMsg(); } });
@@ -394,7 +414,7 @@ function sendPiMsg(){
     body: JSON.stringify({message: msg})
   }).then(function(r){ return r.json(); }).then(function(d){
     wait.className = "pi-msg pi";
-    if (d.ok) wait.textContent = d.reply;
+    if (d.ok) { wait.textContent = d.reply; renderMath(wait); }
     else wait.textContent = "❌ " + (d.error || "调用失败");
     box.scrollTop = box.scrollHeight;
   }).catch(function(){
@@ -1501,6 +1521,24 @@ function loadCfgGlobal(){
       lbox.appendChild(it);
     });
     if (!g.links || g.links.length === 0) lbox.innerHTML = '<span class="tip">（暂无题库，请添加）</span>';
+    // pi 配置
+    var pibox = qs("#cfgPi");
+    if (pibox) {
+      var pi = g.pi || {};
+      pibox.innerHTML = '';
+      var it1 = document.createElement("div");
+      it1.className = "cfg-item";
+      it1.innerHTML = "<span>pi 路径</span><input id=\"cfgPiPath\" style=\"flex:1;margin-left:8px\" value=\"" + esc(pi.path || "") + "\">";
+      pibox.appendChild(it1);
+      var it2 = document.createElement("div");
+      it2.className = "cfg-item";
+      it2.innerHTML = "<span>模型</span><input id=\"cfgPiModel\" style=\"flex:1;margin-left:8px\" value=\"" + esc(pi.model || "") + "\">";
+      pibox.appendChild(it2);
+      var btn = document.createElement("button");
+      btn.textContent = "保存 pi 配置";
+      btn.onclick = savePiConfig;
+      pibox.appendChild(btn);
+    }
     // 字段定义
     var fbox = qs("#cfgFields");
     fbox.innerHTML = "";
@@ -1510,6 +1548,23 @@ function loadCfgGlobal(){
       it.innerHTML = "<span>" + esc(f.label || f.name) + " <small style=\"color:var(--muted)\">" + esc(f.name) + "</small></span><span class=\"vals\">" + esc((f.values||[]).join(" / ")) + "</span>";
       fbox.appendChild(it);
     });
+  });
+}
+
+// V3.1.0：保存 pi 配置（全局配置）
+function savePiConfig(){
+  fetch("/api/config/global").then(function(r){ return r.json(); }).then(function(g){
+    g.pi = g.pi || {};
+    g.pi.path = (qs("#cfgPiPath") ? qs("#cfgPiPath").value : "").trim();
+    g.pi.model = (qs("#cfgPiModel") ? qs("#cfgPiModel").value : "").trim();
+    return fetch("/api/config/global/save", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({links: g.links, pi: g.pi})
+    });
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) qs("#linkMsg").textContent = "✅ pi 配置已保存";
+    else qs("#linkMsg").textContent = "❌ 保存失败";
   });
 }
 

@@ -220,6 +220,7 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
           <button class="stab" data-tab="fav" title="收藏题目导航">收藏</button>
           <button class="stab" data-tab="lists" title="自定义题目清单">清单</button>
         </div>
+        <button id="piChatBtn" title="与 pi 对话（辅助解题）">🤖</button>
         <button id="pinSidebar" title="固定侧边栏（固定时拖拽只调宽不隐藏）">📌</button>
       </div>
       <aside id="sidebar"></aside>
@@ -237,11 +238,11 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
       <button id="exportBtn" title="导出选中题目" style="display:none">📤 导出</button>
       <button id="displayBtn" title="自定义显示字段">⚙ 字段</button>
       <button id="favFilterBtn" title="只看收藏的题目">☆ 收藏</button>
-      <button id="piChatBtn" title="与 pi 对话（辅助解题）">🤖 pi</button>
     </div>
     <div id="mainContent"><div class="empty">加载中…</div></div>
   </main>
   <!-- V3.0.0：右侧 pi 聊天面板 -->
+  <div id="piResizer" title="拖拽调整宽度（拖到最窄隐藏）"></div>
   <div id="piPanel">
     <div id="piPanelHead">🤖 pi <small style="color:var(--muted)">（以当前题库为工作目录）</small>
       <button id="piPanelClose" title="关闭">✕</button>
@@ -268,6 +269,8 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
       <h4>题库列表（全部题库，当前打开的不可移除）<button id="linkOk" style="margin-left:8px;padding:2px 8px">＋ 添加</button></h4>
       <div id="cfgLinks"></div>
       <input id="linkInput" type="text" placeholder="输入题库目录路径后点链接" style="width:100%;margin:4px 0 8px">
+      <h4>pi 配置</h4>
+      <div id="cfgPi"></div>
       <h4>元数据字段定义</h4>
       <div id="cfgFields"></div>
     </div>
