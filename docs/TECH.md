@@ -110,7 +110,10 @@ requiz/
 - **v1.7.1** ✅（修订）：非测试模式点击题组名 → 主区域只查看该题组题目（提示条/高亮/空白取消）
 - **v1.7.2** ✅（修订）：删除评分（用户自评）；做题区统一单一作答区（无选项/题型控件）
 - **v1.8.0** ✅：图片及附件（题库/image/题目名/ 目录约定 + 渲染 + 上传）
-- **v2.0.0**：引入 Agent（组卷/批改/学情分析/pi 集成）
+- **v2.0.0** ✅：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
+- **v2.0.0** 🚧：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
+- **v2.1.0** 📝：分布式题目
+- **v2.2.0** 📝：知识库、题库联动
 
 ---
 
@@ -313,3 +316,17 @@ requiz/
 3. 上传：`POST /api/image/upload`（multipart：bank/id/file）→ 写入 `image/<题目名>/`（同名覆盖需确认）
 4. 前端渲染：题目内容解析 Markdown 图片语法 `![alt](image/xxx)` → `<img src="/image?...">`（KaTeX 渲染后处理）；图片加载失败占位；附件渲染为下载链接
 5. 兼容：无图片题目不受影响；既有功能无回归
+
+---
+
+## V2.0.0（requiz for Obsidian）
+
+1. 目标：Obsidian 新标签页内实现 localhost requiz 全部功能（复用网页，服务端零改动）
+2. 方案：Obsidian 插件 `obsidian-plugin/`：注册视图（`requiz-view`）→ 新标签页 iframe 加载 `http://127.0.0.1:<port>/`
+3. 插件能力：
+   - 功能区图标/命令打开 Requiz 标签页
+   - 设置页：端口（默认 8099）、requiz.exe 路径、题库目录
+   - 「启动 requiz」按钮（child_process 拉起 exe serve 题库目录 -port）；连接状态检测（fetch /api/banks）
+4. 结构：`obsidian-plugin/manifest.json` + `main.js`（Plugin/ItemView/SettingTab）
+5. CORS：requiz `withCORS` 中间件加 `Access-Control-Allow-Origin: *` + OPTIONS 预检，Obsidian 插件跨源 fetch /api/banks 状态检测可用
+5. 兼容：requiz 服务零改动；插件仅做 iframe 集成

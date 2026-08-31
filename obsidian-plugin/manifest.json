@@ -1,0 +1,10 @@
+{
+  "id": "requiz-for-obsidian",
+  "name": "Requiz for Obsidian",
+  "version": "2.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "在 Obsidian 新标签页中使用 requiz 题库系统（导航/组卷/测试/导出/图片全部功能）",
+  "author": "wangjiac23",
+  "authorUrl": "https://github.com/wangjiac23",
+  "isDesktopOnly": true
+}

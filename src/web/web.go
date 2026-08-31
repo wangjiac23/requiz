@@ -55,9 +55,22 @@ func Serve(args []string) error {
 		fmt.Printf("其它题库     : %s（%d 题）\n", b.Dir, len(b.Questions))
 	}
 	fmt.Println("按 Ctrl+C 停止服务")
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, withCORS(mux))
 }
 
+// withCORS 允许跨源访问（V2.0.0：Obsidian 插件 fetch 状态检测）
+func withCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
 
 func parseServeArgs(args []string) (dir, port string, err error) {
 	port = "8080"
