@@ -664,11 +664,12 @@ var questionTpl = template.Must(template.New("question").Parse(`<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.ID}} — requiz</title>
+<link rel="stylesheet" href="/katex/katex.min.css">
 <style>
  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:800px;margin:0 auto;padding:24px;background:#f7f8fa;color:#24292f}
  .card{background:#fff;border:1px solid #e1e4e8;border-radius:8px;padding:16px;margin:12px 0}
  .meta{color:#586069;font-size:0.85em}
- pre{background:#f6f8fa;padding:12px;border-radius:6px;overflow-x:auto;font-size:0.9em;white-space:pre-wrap}
+ .content{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;overflow-x:auto;font-size:0.9em}
  .tag{display:inline-block;background:#ddf4ff;color:#0969da;border-radius:12px;padding:2px 10px;margin:2px;font-size:0.85em}
  a{color:#0969da;text-decoration:none}
 </style>
@@ -677,11 +678,28 @@ var questionTpl = template.Must(template.New("question").Parse(`<!DOCTYPE html>
 <p><a href="/">← 返回题库</a></p>
 <h1>{{.ID}} <small class="meta">{{.File}}</small></h1>
 <div class="card">{{range $k, $v := .Meta}}<span class="tag">{{$k}}: {{$v}}</span>{{end}}</div>
-{{if .Prompt}}<div class="card"><h2>题目</h2><pre>{{.Prompt}}</pre></div>{{end}}
-{{if .Answer}}<div class="card"><h2>答案</h2><pre>{{.Answer}}</pre></div>{{end}}
-{{if .Explain}}<div class="card"><h2>解析</h2><pre>{{.Explain}}</pre></div>{{end}}
-{{if .Note}}<div class="card"><h2>备注</h2><pre>{{.Note}}</pre></div>{{end}}
-{{range $k, $v := .Extra}}<div class="card"><h2>{{$k}}</h2><pre>{{$v}}</pre></div>{{end}}
+{{if .Prompt}}<div class="card"><h2>题目</h2><div class="content">{{.Prompt}}</div></div>{{end}}
+{{if .Answer}}<div class="card"><h2>答案</h2><div class="content">{{.Answer}}</div></div>{{end}}
+{{if .Explain}}<div class="card"><h2>解析</h2><div class="content">{{.Explain}}</div></div>{{end}}
+{{if .Note}}<div class="card"><h2>备注</h2><div class="content">{{.Note}}</div></div>{{end}}
+{{range $k, $v := .Extra}}<div class="card"><h2>{{$k}}</h2><div class="content">{{$v}}</div></div>{{end}}
+<script src="/katex/katex.min.js"></script>
+<script src="/katex/contrib/auto-render.min.js"></script>
+<script>
+window.addEventListener("DOMContentLoaded", function(){
+  if (window.renderMathInElement) {
+    renderMathInElement(document.body, {
+      delimiters: [
+        {left: "$$", right: "$$", display: true},
+        {left: "$", right: "$", display: false},
+        {left: "\\\(", right: "\\\)", display: false},
+        {left: "\\[", right: "\\]", display: true}
+      ],
+      throwOnError: false
+    });
+  }
+});
+</script>
 </body>
 </html>`))
 
@@ -733,6 +751,7 @@ button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(-
 .card h3{margin:0 0 6px;font-size:15px}
 .card .qmeta{color:var(--muted);font-size:12px;margin-bottom:8px}
 .tag{display:inline-block;background:var(--accent-bg);color:var(--accent);border-radius:12px;padding:1px 9px;margin:2px;font-size:12px}
+.content{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-size:14px;line-height:1.6}
 pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-size:14px;line-height:1.6}
 .detail{border-top:1px dashed var(--border);margin-top:10px;padding-top:8px}
 .empty{color:var(--muted);text-align:center;padding:40px}
@@ -761,6 +780,19 @@ function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"
 function tagName(k){
   var names = {chapter:"章节",grade:"年级",difficulty:"难度",importance:"重要性",source:"来源",knowledge:"知识点",type:"题型"};
   return names[k] || k;
+}
+
+// KaTeX 公式渲染配置与函数（div.content 内 $...$/$$...$$ 自动渲染）
+var katexDelims = [
+  {left: "$$", right: "$$", display: true},
+  {left: "$", right: "$", display: false},
+  {left: "\\\(", right: "\\\)", display: false},
+  {left: "\\[", right: "\\]", display: true}
+];
+function renderMath(el){
+  if (window.renderMathInElement) {
+    renderMathInElement(el, {delimiters: katexDelims, throwOnError: false});
+  }
 }
 
 function init(){
@@ -1002,13 +1034,14 @@ function renderList(only){
       var v = q.meta[k];
       if (v) meta += '<span class="tag">' + esc(tagName(k)) + ": " + esc(v) + "</span>";
     });
-    card.innerHTML = "<h3>" + esc(q.id) + (it.pkg ? ' <small style="color:#586069">' + esc(it.pkg) + "</small>" : "") + "</h3><div class='qmeta'>" + meta + "</div><pre>" + esc(q.title) + "</pre>";
+    card.innerHTML = "<h3>" + esc(q.id) + (it.pkg ? ' <small style="color:#586069">' + esc(it.pkg) + "</small>" : "") + "</h3><div class='qmeta'>" + meta + "</div><div class='content'>" + esc(q.title) + "</div>";
     var det = document.createElement("div");
     det.className = "detail";
     card.appendChild(det);
     det.innerHTML = "加载详情…";
     card.onclick = function(){ loadDetail(q, det, card); };
     main.appendChild(card);
+    renderMath(card);
   });
 }
 
@@ -1020,26 +1053,15 @@ function loadDetail(q, det, card){
     html += '<button id="btnOpen">📂 打开本地</button>';
     html += '<button id="btnEdit">✏️ 编辑</button>';
     html += '</div>';
-    if (d.prompt) html += "<div><b>题目</b><pre>" + esc(d.prompt) + "</pre></div>";
-    if (d.answer) html += "<div><b>答案</b><pre>" + esc(d.answer) + "</pre></div>";
-    if (d.explain) html += "<div><b>解析</b><pre>" + esc(d.explain) + "</pre></div>";
-    if (d.note) html += "<div><b>备注</b><pre>" + esc(d.note) + "</pre></div>";
+    if (d.prompt) html += "<div><b>题目</b><div class=\"content\">" + esc(d.prompt) + "</div></div>";
+    if (d.answer) html += "<div><b>答案</b><div class=\"content\">" + esc(d.answer) + "</div></div>";
+    if (d.explain) html += "<div><b>解析</b><div class=\"content\">" + esc(d.explain) + "</div></div>";
+    if (d.note) html += "<div><b>备注</b><div class=\"content\">" + esc(d.note) + "</div></div>";
     if (!html) html = '<span class="tip">（无更多内容）</span>';
     det.innerHTML = html;
     det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
     det.querySelector("#btnEdit").onclick = function(){ openEdit(d, q); };
-    // KaTeX 公式渲染
-    if (window.renderMathInElement) {
-      renderMathInElement(det, {
-        delimiters: [
-          {left: "$$", right: "$$", display: true},
-          {left: "$", right: "$", display: false},
-          {left: "\\\\(", right: "\\\\)", display: false},
-          {left: "\\[", right: "\\]", display: true}
-        ],
-        throwOnError: false
-      });
-    }
+    renderMath(det);
     card.classList.add("active");
   }).catch(function(){ det.innerHTML = '<span class="tip">加载失败</span>'; });
 }

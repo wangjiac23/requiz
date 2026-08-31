@@ -92,6 +92,7 @@ requiz/
 - **v1.1.3** ✅（修订）：拖拽到阈值自动隐藏（侧边栏 <100px / 筛选栏 <40px）· 筛选栏拖拽调高
 - **v1.1.4** ✅（修订）：📌 固定按钮，固定时拖拽只调尺寸不隐藏
 - **V1.2.0** ✅：公式渲染（KaTeX 本地化）+ 打开本地文件 + 网页编辑 + 刷新同步
+- **v1.2.1** ✅（修订）：修复公式不渲染（auto-render 忽略 pre 标签 → div.content）
 - **v2.0.0**：引入 Agent（组卷/批改/学情分析/pi 集成）
 
 ---
@@ -159,3 +160,6 @@ requiz/
    - `POST /api/reload`：body `{bank}`，重新扫描题库
    - 静态：`GET /katex/*`（KaTeX 资源）
 4. 结构变动：`web/katex/` 目录新增；src/server.go 增挂载与新 API；src/parser.go 增序列化函数
+
+### V1.2.0 修订
+1. v1.2.1 修复公式渲染：auto-render 默认忽略 `<pre>`/`<code>` 标签 → 题目内容改用 `<div class="content">`（CSS 保持 pre-wrap）；列表卡片、详情、整页兼容页统一渲染；提取统一 `katexDelims` 并修正 `\(` 分隔符
