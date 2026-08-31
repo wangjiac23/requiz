@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v2.0.0（CLI + Localhost 网页 + Obsidian 插件）
+- 版本：v2.1.0（CLI + Localhost 网页 + Obsidian 分布式）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -129,6 +129,11 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 **V2.0.0（Obsidian 集成）**
 57. Obsidian 插件：新标签页 iframe 加载 localhost requiz 网页（复用全部功能）
 58. 插件设置：端口/exe 路径/题库目录 + 「启动 requiz」按钮 + 连接状态检测
+
+**V2.1.0（分布式题目）**
+59. Obsidian Vault 作为题库：插件复用 Obsidian API 扫描（getMarkdownFiles + metadataCache 预筛 app: requiz）→ POST /api/external/banks 注入 requiz
+60. Vault 路径设置（./=全部 / ./题目;./作业题=指定文件夹）；文件变更自动重新注入
+61. 📂 打开本地：iframe 环境 postMessage → Obsidian 新标签页打开 md；requiz 支持 serve 无目录（空库待注入）
 
 ## 快速开始
 

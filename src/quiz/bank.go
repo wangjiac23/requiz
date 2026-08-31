@@ -16,6 +16,15 @@ import (
 // 验证目录存在、读取 .requiz/config.yaml、扫描目录下所有题目 md 文件
 // 统一使用绝对路径（保证题库对等比较与配置一致性）
 func ConnectBank(dir string) (*model.Bank, error) {
+	return connectBankFiltered(dir, false)
+}
+
+// ConnectBankAppOnly 只收录 app: requiz 的题目（V2.1.0 Obsidian Vault 模式）
+func ConnectBankAppOnly(dir string) (*model.Bank, error) {
+	return connectBankFiltered(dir, true)
+}
+
+func connectBankFiltered(dir string, appOnly bool) (*model.Bank, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("题库目录解析失败: %s（%w）", dir, err)
@@ -75,7 +84,7 @@ func ConnectBank(dir string) (*model.Bank, error) {
 		bank.Name = filepath.Base(abs)
 	}
 
-	qs, err := scanQuestions(abs)
+	qs, err := scanQuestions(abs, appOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +93,8 @@ func ConnectBank(dir string) (*model.Bank, error) {
 }
 
 // scanQuestions 递归扫描目录下所有 .md 题目文件（跳过 .requiz / .git）
-func scanQuestions(root string) ([]*model.Question, error) {
+// appOnly=true 时仅收录 app: requiz 的 md（Obsidian Vault 模式）
+func scanQuestions(root string, appOnly bool) ([]*model.Question, error) {
 	var qs []*model.Question
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -97,11 +107,23 @@ func scanQuestions(root string) ([]*model.Question, error) {
 			return nil
 		}
 		if strings.HasSuffix(d.Name(), ".md") {
-			if q, err := parser.ParseQuestion(path); err == nil && q.IsQuestion() {
-				qs = append(qs, q)
+			if q, err := parser.ParseQuestion(path); err == nil {
+				if appOnly {
+					if q.Meta["app"] == "requiz" {
+						qs = append(qs, q)
+					}
+				} else if q.IsQuestion() {
+					qs = append(qs, q)
+				}
 			}
 		}
 		return nil
 	})
 	return qs, err
+}
+
+// CreateEmptyBank 创建空题库（V2.1.0：serve 无目录时，供插件注入）
+func CreateEmptyBank(dir string) *model.Bank {
+	abs, _ := filepath.Abs(dir)
+	return &model.Bank{Dir: abs, Name: filepath.Base(abs), App: "requiz", Questions: []*model.Question{}}
 }

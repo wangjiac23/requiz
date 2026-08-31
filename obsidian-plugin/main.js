@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   port: 8099,
   exePath: "",
   bankDir: "",
+  vaultBank: "", // V2.1.0：空=不连；./=整个 Vault；./题目;./作业题=指定文件夹
 };
 
 class RequizView extends ItemView {
@@ -103,6 +104,114 @@ class RequizPlugin extends Plugin {
       callback: () => this.activateView(),
     });
     this.addSettingTab(new RequizSettingTab(this.app, this));
+
+    // V2.1.0：接收 requiz 页面「打开本地」请求 → Obsidian 新标签页打开
+    window.addEventListener("message", (e) => {
+      if (e.data && e.data.type === "requiz-open" && e.data.path) {
+        this.openInObsidian(e.data.path);
+      }
+    });
+
+    // V2.1.0：Obsidian 文件变更 → 重新扫描注入（防抖）
+    this.registerEvent(
+      this.app.vault.on("modify", () => this.scheduleRescan())
+    );
+    this.registerEvent(
+      this.app.vault.on("create", () => this.scheduleRescan())
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => this.scheduleRescan())
+    );
+  }
+
+  // V2.1.0：打开 Obsidian 文件（绝对路径 → Vault 相对路径，统一正斜杠，多级匹配）
+  async openInObsidian(absPath) {
+    const base = this.app.vault.adapter.getBasePath();
+    const baseN = (base || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const absN = (absPath || "").replace(/\\/g, "/");
+    let rel = absN;
+    if (baseN && absN.startsWith(baseN)) {
+      rel = absN.slice(baseN.length + 1);
+    }
+    // ① 直接按相对路径定位
+    let file = this.app.vault.getAbstractFileByPath(rel);
+    // ② 兑底：全文件匹配（相对路径/文件名）
+    if (!file && absN) {
+      const name = absN.split("/").pop();
+      file =
+        this.app.vault.getFiles().find((f) => f.path === rel) ||
+        this.app.vault.getFiles().find((f) => f.path.endsWith("/" + rel)) ||
+        this.app.vault.getFiles().find((f) => f.name === name && absN.endsWith("/" + f.path));
+    }
+    if (file) {
+      await this.app.workspace.getLeaf("tab").openFile(file);
+    } else {
+      new Notice("❌ 找不到文件：" + rel + "\nbase:" + baseN + "\nabs:" + absN);
+    }
+  }
+
+  // V2.1.0：Vault 扫描注入（复用 Obsidian API，防抖 1s）
+  scheduleRescan() {
+    clearTimeout(this._scanTimer);
+    this._scanTimer = setTimeout(() => this.scanAndInject(), 1000);
+  }
+
+  async scanAndInject() {
+    if (!this.settings.vaultBank) return; // 未启用 Vault 模式
+    const { vault, metadataCache } = this.app;
+    const base = vault.adapter.getBasePath();
+    // 解析允许的目录列表（./=全部；./a;./b=指定）
+    const allowDirs = this.resolveVaultDirs();
+    const files = vault.getMarkdownFiles();
+    const qs = [];
+    let scanned = 0, matched = 0;
+    for (const f of files) {
+      // 目录过滤
+      if (allowDirs) {
+        const rel = f.path;
+        const ok = allowDirs.some((d) => rel === d || rel.startsWith(d + "/"));
+        if (!ok) continue;
+      }
+      scanned++;
+      // 先读正文（metadataCache 预筛在启动初期可能未就绪，直接读最可靠）
+      let content = "";
+      try {
+        content = await vault.adapter.read(f.path);
+      } catch (e) {
+        continue;
+      }
+      // 仅检查 frontmatter 元数据块（--- 开头到 --- 结尾），避免正文误匹配
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (!fmMatch) continue;
+      if (!/app\s*:\s*requiz/.test(fmMatch[1])) continue;
+      matched++;
+      qs.push({ path: base + "\\" + f.path.split("/").join("\\"), content: content });
+    }
+    // 注入 requiz
+    try {
+      const resp = await fetch("http://127.0.0.1:" + this.settings.port + "/api/external/banks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bank: { name: "Obsidian Vault", dir: base, questions: qs } }),
+      });
+      const d = await resp.json();
+      new Notice("📚 requiz 已同步 Vault：扫描 " + scanned + " 文件，收录 " + (d.count || 0) + " 题（目录：" + base + "）");
+      this.refreshViews();
+    } catch (e) {
+      new Notice("⚠️ requiz 同步失败：" + e.message + "（服务是否已启动？）");
+    }
+  }
+
+  // 解析 Vault 目录列表：空=null（全部）；./a;./b → [a, b]
+  resolveVaultDirs() {
+    const v = this.settings.vaultBank;
+    if (!v) return null;
+    if (v === "./") return null; // 全部
+    return v
+      .split(";")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => (p.startsWith("./") ? p.slice(2) : p.replace(/^[\\\\/]+/, "")));
   }
 
   onunload() {}
@@ -145,11 +254,12 @@ class RequizPlugin extends Plugin {
       new Notice("❌ 请先在设置中配置 requiz.exe 路径");
       return;
     }
-    // 数组拼接保证参数间空格正确
+    // V2.1.0：Vault 模式不指定目录（空库启动，插件扫描注入）；普通模式用 bankDir
+    const dirArg = this.settings.vaultBank ? "" : this.settings.bankDir;
     const parts = [
       '"' + this.settings.exePath + '"',
       "serve",
-      this.settings.bankDir ? '"' + this.settings.bankDir + '"' : null,
+      dirArg ? '"' + dirArg + '"' : null,
       "-port",
       String(this.settings.port),
     ].filter(Boolean);
@@ -158,12 +268,11 @@ class RequizPlugin extends Plugin {
       const { exec } = require("child_process");
       exec(cmd, (err, stdout, stderr) => {
         if (err && !err.killed) {
-          // 端口被占 → 提示可能已在运行
           if (stderr && stderr.indexOf("bind") >= 0) {
             new Notice(
               "ℹ️ 端口 " + this.settings.port + " 已被占用（requiz 可能已在运行），直接打开 Requiz 标签页即可"
             );
-            this.refreshViews();
+            this.afterServiceReady();
           } else {
             new Notice("⚠️ requiz 启动失败：" + (stderr || err.message));
           }
@@ -171,11 +280,10 @@ class RequizPlugin extends Plugin {
         }
       });
       new Notice("⏳ 正在启动 requiz（端口 " + this.settings.port + "）…");
-      // 轮询检测服务就绪
       this.waitForService(this.settings.port, (ok) => {
         if (ok) {
           new Notice("✅ requiz 启动成功，已连接（端口 " + this.settings.port + "）");
-          this.refreshViews();
+          this.afterServiceReady();
         } else {
           new Notice(
             "❌ 启动后未检测到服务。请检查 exe 路径是否正确，或手动运行：requiz serve [题库] -port " +
@@ -185,9 +293,15 @@ class RequizPlugin extends Plugin {
       });
     } catch (e) {
       new Notice(
-        "⚠️ 插件环境无法直接启动服务，请手动运行：requiz serve [题库] -port " + this.settings.port
+        "⚠️ 插件环境无法直接启动服务，请手动运行：requiz serve -port " + this.settings.port
       );
     }
+  }
+
+  // 服务就绪后：Vault 模式触发扫描注入，普通模式刷新视图
+  afterServiceReady() {
+    if (this.settings.vaultBank) this.scanAndInject();
+    this.refreshViews();
   }
 
   waitForService(port, cb) {
@@ -261,6 +375,19 @@ class RequizSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.bankDir)
           .onChange(async (value) => {
             this.plugin.settings.bankDir = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Vault 题库路径（分布式）")
+      .setDesc("空 = 不连接；./ = 整个库；./题目;./作业题 = 只读取指定文件夹（相对/绝对、分号分隔）")
+      .addText((text) =>
+        text
+          .setPlaceholder("./题目;./作业题")
+          .setValue(this.plugin.settings.vaultBank)
+          .onChange(async (value) => {
+            this.plugin.settings.vaultBank = value.trim();
             await this.plugin.saveSettings();
           })
       );

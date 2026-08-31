@@ -329,4 +329,11 @@ requiz/
    - 「启动 requiz」按钮（child_process 拉起 exe serve 题库目录 -port）；连接状态检测（fetch /api/banks）
 4. 结构：`obsidian-plugin/manifest.json` + `main.js`（Plugin/ItemView/SettingTab）
 5. CORS：requiz `withCORS` 中间件加 `Access-Control-Allow-Origin: *` + OPTIONS 预检，Obsidian 插件跨源 fetch /api/banks 状态检测可用
+
+### V2.1.0（分布式题目：Obsidian Vault 复用 API 注入）
+1. 插件复用 Obsidian API 扫描：`vault.getMarkdownFiles()` + `metadataCache.getFrontMatterCache()` 预筛 `app: requiz`（无需读文件）+ `vault.adapter.read()` 读正文
+2. 注入：`POST /api/external/banks`（bank 名 + 题目 [{path, content}]）→ requiz `parser.ParseContent` 解析 + `Store.InjectBank` 替换 main；空库 serve（`requiz serve -port x`）待注入
+3. 同步：`vault.on(create/modify/delete)` 防抖 1s 重新扫描注入
+4. 打开本地：requiz 前端检测 iframe → `postMessage({type:"requiz-open",path})` → 插件 `vault.getAbstractFileByPath` + 新标签页打开
+5. 库外模式：serve 分号分隔多目录（第一个主库其余链接）+ `-app-only`（磁盘严格过滤）保留
 5. 兼容：requiz 服务零改动；插件仅做 iframe 集成
