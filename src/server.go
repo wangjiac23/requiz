@@ -19,19 +19,69 @@ import (
 // ---------- Store：多题库状态（主题库 + 链接题库） ----------
 
 type Store struct {
-	mu    sync.Mutex
-	main  *Bank
-	links []*Bank
+	mu     sync.Mutex
+	main   *Bank
+	links  []*Bank
+	global GlobalConfig // V1.3.0 全局配置（用户级）
 }
 
 func newStore(main *Bank) *Store {
 	s := &Store{main: main}
-	for _, linkDir := range main.Links {
-		if b, err := connectBank(linkDir); err == nil {
+	// V1.3.0：读全局配置（首次自动创建默认模板），主题库自动注册（Obsidian 式：打开即记录）
+	gc, err := readGlobalConfig()
+	if err == nil {
+		s.global = gc
+		// 主题库自动加入全局题库列表
+		if !containsStr(gc.Links, main.Dir) {
+			gc.Links = append(gc.Links, main.Dir)
+			_ = writeGlobalConfig(gc)
+		}
+		s.global = gc
+		migrateProjectLinks(main, &s.global)
+	} else {
+		s.global = defaultGlobalConfig()
+	}
+	// 加载全局配置中的全部题库（对等：都加载，主题库跳过重复）
+	for _, bankDir := range s.global.Links {
+		if bankDir == main.Dir {
+			continue
+		}
+		if b, err := connectBank(bankDir); err == nil {
 			s.links = append(s.links, b)
 		}
 	}
 	return s
+}
+
+// migrateProjectLinks 旧版：项目配置中的 links 迁移到全局配置
+func migrateProjectLinks(main *Bank, gc *GlobalConfig) {
+	if len(main.Links) == 0 {
+		return
+	}
+	changed := false
+	for _, l := range main.Links {
+		if !containsStr(gc.Links, l) {
+			gc.Links = append(gc.Links, l)
+			changed = true
+		}
+	}
+	if changed {
+		_ = writeGlobalConfig(*gc)
+	}
+	// 重写项目配置（去除旧版 links 节）
+	pc, err := readProjectConfig(main.Dir)
+	if err == nil {
+		_ = writeProjectConfig(main.Dir, pc)
+	}
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) banks() []*Bank {
@@ -57,70 +107,31 @@ func (s *Store) bankByDir(dir string) (*Bank, error) {
 	return nil, fmt.Errorf("未链接的题库: %s", dir)
 }
 
-// addLink 连接新题库并持久化到主题库 .requiz/config.yaml
+// addLink 连接新题库并持久化到全局配置（V1.3.0：links 存用户级全局配置）
 func (s *Store) addLink(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
-	for _, b := range s.banks() {
-		if b.Dir == abs {
-			return nil // 已链接
-		}
+	if containsStr(s.global.Links, abs) {
+		return nil // 已链接
 	}
 	b, err := connectBank(abs)
 	if err != nil {
 		return err
 	}
-	if err := s.persistLink(abs); err != nil {
+	gc := s.global
+	if !containsStr(gc.Links, abs) {
+		gc.Links = append(gc.Links, abs)
+	}
+	if err := writeGlobalConfig(gc); err != nil {
 		return err
 	}
 	s.mu.Lock()
+	s.global.Links = append(s.global.Links, abs)
 	s.links = append(s.links, b)
 	s.mu.Unlock()
 	return nil
-}
-
-// persistLink 把链接题库写入主题库配置的 links 节
-func (s *Store) persistLink(dir string) error {
-	cfg := filepath.Join(s.main.Dir, ".requiz", "config.yaml")
-	text := ""
-	if data, err := os.ReadFile(cfg); err == nil {
-		text = string(data)
-	}
-	lines := strings.Split(text, "\n")
-	entry := "  - " + dir
-	// 去重
-	for _, l := range lines {
-		if strings.TrimSpace(l) == strings.TrimSpace(entry) {
-			return nil
-		}
-	}
-	linksIdx := -1
-	for i, l := range lines {
-		if strings.TrimSpace(l) == "links:" {
-			linksIdx = i
-			break
-		}
-	}
-	if linksIdx < 0 {
-		lines = append(lines, "", "links:", entry)
-	} else {
-		// 在 links 节之后、遇到下一非注释/非列表行前插入
-		insertAt := len(lines)
-		for i := linksIdx + 1; i < len(lines); i++ {
-			t := strings.TrimSpace(lines[i])
-			if t != "" && !strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "#") {
-				insertAt = i
-				break
-			}
-		}
-		newLines := append([]string{}, lines[:insertAt]...)
-		newLines = append(newLines, entry)
-		newLines = append(newLines, lines[insertAt:]...)
-		lines = newLines
-	}
-	return os.WriteFile(cfg, []byte(strings.Join(lines, "\n")), 0644)
 }
 
 // ---------- Web 服务 ----------
@@ -149,13 +160,16 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/reload", apiReloadHandler(store))
 	mux.HandleFunc("/api/meta-values", apiMetaValuesHandler(store))
 	mux.HandleFunc("/api/meta-value/add", apiMetaValueAddHandler(store))
+	mux.HandleFunc("/api/config/global", apiConfigGlobalHandler(store))
+	mux.HandleFunc("/api/config/global/save", apiConfigGlobalSaveHandler(store))
+	mux.HandleFunc("/api/config/project", apiConfigProjectHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
 	fmt.Printf("requiz web   : http://%s/\n", addr)
-	fmt.Printf("主题库       : %s（%d 题）\n", bank.Dir, len(bank.Questions))
+	fmt.Printf("当前题库     : %s（%d 题）\n", bank.Dir, len(bank.Questions))
 	for _, b := range store.banks()[1:] {
-		fmt.Printf("链接题库     : %s（%d 题）\n", b.Dir, len(b.Questions))
+		fmt.Printf("其它题库     : %s（%d 题）\n", b.Dir, len(b.Questions))
 	}
 	fmt.Println("按 Ctrl+C 停止服务")
 	return http.ListenAndServe(addr, mux)
@@ -302,15 +316,18 @@ func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
 			q.Path = newPath
 			q.File = body.File
 		}
-		// 元数据更新（app/bank/path 系统字段除外；空值删除该字段）
+		// 元数据整体替换（app/bank/path 系统字段除外；删除行/留空即删除该字段）
+		for k := range q.Meta {
+			if k != "app" && k != "bank" && k != "path" {
+				delete(q.Meta, k)
+			}
+		}
 		if body.Meta != nil {
 			for k, v := range body.Meta {
 				if k == "app" || k == "bank" || k == "path" {
 					continue
 				}
-				if strings.TrimSpace(v) == "" {
-					delete(q.Meta, k)
-				} else {
+				if strings.TrimSpace(v) != "" {
 					q.Meta[k] = v
 				}
 			}
@@ -371,57 +388,9 @@ func apiReloadHandler(s *Store) http.HandlerFunc {
 	}
 }
 
-// ---------- V1.2.3：元数据字段值配置（.requiz/meta-values.yaml） ----------
+// ---------- V1.3.0：元数据字段定义（全局配置 + 项目配置） ----------
 
-type metaValues map[string][]string
-
-func metaValuesPath(b *Bank) string {
-	return filepath.Join(b.Dir, ".requiz", "meta-values.yaml")
-}
-
-func readMetaValues(b *Bank) metaValues {
-	mv := metaValues{}
-	data, err := os.ReadFile(metaValuesPath(b))
-	if err != nil {
-		return mv
-	}
-	cur := ""
-	for _, l := range strings.Split(string(data), "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" || strings.HasPrefix(l, "#") {
-			continue
-		}
-		if strings.HasPrefix(l, "- ") {
-			if cur != "" {
-				mv[cur] = append(mv[cur], strings.TrimSpace(l[2:]))
-			}
-			continue
-		}
-		if idx := strings.Index(l, ":"); idx > 0 {
-			cur = strings.TrimSpace(l[:idx])
-			mv[cur] = []string{}
-		}
-	}
-	return mv
-}
-
-func writeMetaValues(b *Bank, mv metaValues) error {
-	keys := []string{}
-	for k := range mv {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var sb strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&sb, "%s:\n", k)
-		for _, v := range mv[k] {
-			fmt.Fprintf(&sb, "  - %s\n", v)
-		}
-	}
-	return os.WriteFile(metaValuesPath(b), []byte(sb.String()), 0644)
-}
-
-// GET /api/meta-values?bank= ：返回题库的字段已知值 {field: [values]}
+// GET /api/meta-values?bank= ：返回合并后的字段已知值 {field: [values]}
 func apiMetaValuesHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b, err := s.bankByDir(r.URL.Query().Get("bank"))
@@ -429,11 +398,17 @@ func apiMetaValuesHandler(s *Store) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		writeJSON(w, readMetaValues(b))
+		pc, _ := readProjectConfig(b.Dir)
+		merged := mergeFieldDefs(s.global.MetaFields, pc.MetaFields)
+		out := map[string][]string{}
+		for _, f := range merged {
+			out[f.Name] = f.Values
+		}
+		writeJSON(w, out)
 	}
 }
 
-// POST /api/meta-value/add {bank, field, value}：新值写入题库配置（去重）
+// POST /api/meta-value/add {bank, field, value}：新值写入配置（全局字段→全局配置；否则→项目配置）
 func apiMetaValueAddHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -454,19 +429,125 @@ func apiMetaValueAddHandler(s *Store) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
 			return
 		}
-		mv := readMetaValues(b)
-		for _, v := range mv[body.Field] {
-			if v == body.Value {
-				writeJSON(w, map[string]bool{"ok": true})
+		inGlobal := false
+		for _, f := range s.global.MetaFields {
+			if f.Name == body.Field {
+				inGlobal = true
+				break
+			}
+		}
+		if inGlobal {
+			// 值加入全局配置字段
+			gc := s.global
+			for i := range gc.MetaFields {
+				if gc.MetaFields[i].Name == body.Field {
+					if !containsStr(gc.MetaFields[i].Values, body.Value) {
+						gc.MetaFields[i].Values = append(gc.MetaFields[i].Values, body.Value)
+						if err := writeGlobalConfig(gc); err != nil {
+							http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+							return
+						}
+						s.mu.Lock()
+						s.global = gc
+						s.mu.Unlock()
+					}
+					break
+				}
+			}
+		} else {
+			// 自定义字段：写入该题库项目配置（字段不存在则新建）
+			pc, _ := readProjectConfig(b.Dir)
+			found := false
+			for i := range pc.MetaFields {
+				if pc.MetaFields[i].Name == body.Field {
+					if !containsStr(pc.MetaFields[i].Values, body.Value) {
+						pc.MetaFields[i].Values = append(pc.MetaFields[i].Values, body.Value)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				pc.MetaFields = append(pc.MetaFields, FieldDef{Name: body.Field, Label: body.Field, Values: []string{body.Value}})
+			}
+			if err := writeProjectConfig(b.Dir, pc); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 				return
 			}
 		}
-		mv[body.Field] = append(mv[body.Field], body.Value)
-		if err := writeMetaValues(b, mv); err != nil {
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// ---------- V1.3.0：配置管理 API ----------
+
+// GET /api/config/global ：返回全局配置与路径
+func apiConfigGlobalHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		gc := s.global
+		writeJSON(w, map[string]any{
+			"path":       globalConfigPath(),
+			"defaults":   gc.Defaults,
+			"meta_fields": gc.MetaFields,
+			"links":      gc.Links,
+		})
+	}
+}
+
+// POST /api/config/global {links?} ：更新全局配置（当前支持链接题库列表）
+func apiConfigGlobalSaveHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Links []string `json:"links"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+			http.Error(w, `{"error":"body 解析失败"}`, http.StatusBadRequest)
+			return
+		}
+		gc := s.global
+		gc.Links = body.Links
+		// 保护：不允许移除当前打开的题库
+		if !containsStr(gc.Links, s.main.Dir) {
+			http.Error(w, `{"error":"不能移除当前打开的题库"}`, http.StatusBadRequest)
+			return
+		}
+		if err := writeGlobalConfig(gc); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
+		s.mu.Lock()
+		s.global = gc
+		// 重新连接链接题库
+		s.links = nil
+		for _, linkDir := range gc.Links {
+			if b, err := connectBank(linkDir); err == nil {
+				s.links = append(s.links, b)
+			}
+		}
+		s.mu.Unlock()
 		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// GET /api/config/project?bank= ：返回项目配置与路径
+func apiConfigProjectHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.bankByDir(r.URL.Query().Get("bank"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		pc, _ := readProjectConfig(b.Dir)
+		writeJSON(w, map[string]any{
+			"path":        projectConfigPath(b.Dir),
+			"app":         pc.App,
+			"bank":        pc.Bank,
+			"meta_fields": pc.MetaFields,
+		})
 	}
 }
 
@@ -763,15 +844,35 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   <main id="main"><div class="empty">加载中…</div></main>
 </div>
 <div id="modal" hidden>
-  <div class="modal-box">
-    <h3>链接题库 🔗</h3>
-    <p class="tip">输入题库目录路径（相对主题库或绝对路径），将写入主题库的 .requiz/config.yaml</p>
-    <input id="linkInput" type="text" placeholder="例如 ../题库B 或 D:\xxx\题库B">
-    <div class="modal-actions">
-      <button id="linkOk">链接</button>
-      <button id="linkCancel">取消</button>
+  <div class="modal-box" style="width:600px;max-height:85vh;overflow-y:auto">
+    <h3>⚙ 设置 <small style="color:var(--muted);font-weight:400">配置管理</small></h3>
+    <div class="cfg-tabs">
+      <button id="tabGlobal" class="cfg-tab active">🌐 全局配置</button>
+      <button id="tabProject" class="cfg-tab">📁 题库配置</button>
+    </div>
+    <!-- 全局配置页签 -->
+    <div id="cfgGlobal">
+      <p class="tip">配置文件：<code id="cfgGlobalPath"></code></p>
+      <h4>默认配置</h4>
+      <div id="cfgDefaults"></div>
+      <h4>题库列表（全部题库，当前打开的不可移除）<button id="linkOk" style="margin-left:8px;padding:2px 8px">＋ 添加</button></h4>
+      <div id="cfgLinks"></div>
+      <input id="linkInput" type="text" placeholder="输入题库目录路径后点链接" style="width:100%;margin:4px 0 8px">
+      <h4>元数据字段定义</h4>
+      <div id="cfgFields"></div>
+    </div>
+    <!-- 题库配置页签 -->
+    <div id="cfgProject" hidden>
+      <p class="tip">配置文件：<code id="cfgProjectPath"></code></p>
+      <h4>题库信息</h4>
+      <div id="cfgProjectInfo"></div>
+      <h4>自定义属性字段</h4>
+      <div id="cfgProjectFields"></div>
     </div>
     <div id="linkMsg" class="tip"></div>
+    <div class="modal-actions">
+      <button id="linkCancel">关闭</button>
+    </div>
   </div>
 </div>
 <div id="editModal">
@@ -779,8 +880,9 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <h3>编辑题目 <span id="editId" class="meta"></span></h3>
     <label class="lbl">题目名（文件名）</label>
     <input id="editFile" type="text">
-    <label class="lbl">元数据（留空则删除该字段）<button id="editAddField" style="margin-left:8px;padding:2px 8px">＋ 添加字段</button></label>
+    <label class="lbl" id="metaFoldBtn" style="cursor:pointer;user-select:none">▾ 元数据</label>
     <div id="editMeta"></div>
+    <div style="text-align:right;margin-bottom:8px"><button id="editAddField">＋ 添加字段</button></div>
     <label class="lbl">题干</label>
     <textarea id="editPrompt" rows="5"></textarea>
     <label class="lbl">答案</label>
@@ -903,18 +1005,33 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #modal.show{display:flex}
 #editModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #editModal.show{display:flex}
-#editModal .modal-box{width:560px;max-width:92%}
+#editModal .modal-box{width:560px;max-width:92%;max-height:85vh;overflow-y:auto}
 #editModal textarea{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px;resize:vertical}
 #editModal .lbl{font-size:12px;color:var(--muted)}
 #editModal input[type=text]{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px}
 #editMeta{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
-.meta-row{display:grid;grid-template-columns:80px 1fr;gap:6px;align-items:center}
+#editMeta.folded{display:none}
+.meta-row{display:grid;grid-template-columns:80px 1fr 28px;gap:6px;align-items:center}
 .meta-row .cust{grid-column:2;display:flex;gap:4px}
 .meta-row .cust input{flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px}
+.meta-row .cust .hint{font-size:11px;color:var(--muted);white-space:nowrap}
+.meta-del{border:none;background:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px}
+.meta-del:hover{color:#d1242f}
 .q-actions{display:flex;gap:8px;margin-bottom:10px}
 .q-actions button{font-size:12px;padding:4px 10px}
 #reloadBtn{padding:6px 10px}
 .modal-box{background:var(--panel);border-radius:10px;padding:20px;width:420px;max-width:90%}
+#modal .modal-box h4{margin:10px 0 6px;font-size:13px;color:var(--text)}
+.cfg-tabs{display:flex;gap:6px;margin-bottom:10px}
+.cfg-tab{padding:5px 14px;border:1px solid var(--border);border-radius:6px;background:var(--panel);cursor:pointer;font-size:13px}
+.cfg-tab.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.cfg-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;margin:4px 0;font-size:13px}
+.cfg-item .path{color:var(--muted);font-size:12px;word-break:break-all}
+.cfg-item .vals{color:var(--muted);font-size:12px}
+.cfg-del{border:none;background:none;color:var(--muted);cursor:pointer;font-size:14px}
+.cfg-del:hover{color:#d1242f}
+.cfg-open{padding:2px 8px;font-size:12px}
+#modal code{background:#f6f8fa;padding:1px 6px;border-radius:4px;font-size:12px;word-break:break-all}
 .modal-box h3{margin:0 0 8px}
 .tip{color:var(--muted);font-size:12px}
 #linkInput{width:100%;padding:8px;margin:10px 0;border:1px solid var(--border);border-radius:6px}
@@ -970,6 +1087,10 @@ function init(){
   qs("#editSave").onclick = saveEdit;
   qs("#editCancel").onclick = closeEdit;
   qs("#editAddField").onclick = addField;
+  qs("#metaFoldBtn").onclick = function(){
+    var folded = qs("#editMeta").classList.toggle("folded");
+    this.textContent = folded ? "▸ 元数据" : "▾ 元数据";
+  };
   loadBanks();
 }
 
@@ -1282,103 +1403,247 @@ function addMetaRow(box, k, v, knownVals){
     if (vv === v) o.selected = true;
     sel.appendChild(o);
   });
-  var cust = document.createElement("option"); cust.value = "__custom__"; cust.text = "✍️ 自定义/新增值…";
-  sel.appendChild(cust);
-  if (v && (knownVals||[]).indexOf(v) < 0) cust.selected = true;
+  // 当前值不在已知列表 → 显示为「值(自定义)」并选中
+  if (v && (knownVals||[]).indexOf(v) < 0) {
+    var co = document.createElement("option"); co.value = v; co.text = v + "(自定义)"; co.selected = true;
+    sel.appendChild(co);
+  }
+  // 新增值 / 自定义 两个特殊选项
+  var addOpt = document.createElement("option"); addOpt.value = "__add__"; addOpt.text = "➕ 新增值…";
+  sel.appendChild(addOpt);
+  var onceOpt = document.createElement("option"); onceOpt.value = "__once__"; onceOpt.text = "✍️ 自定义…";
+  sel.appendChild(onceOpt);
   var cdiv = document.createElement("span");
   cdiv.className = "cust";
-  cdiv.style.display = cust.selected ? "flex" : "none";
+  cdiv.style.display = "none";
   var inp = document.createElement("input");
-  inp.value = cust.selected ? v : "";
-  var btnAdd = document.createElement("button"); btnAdd.textContent = "📥 加入配置"; btnAdd.title = "保存至题库配置，以后所有题目可选";
-  var btnOnce = document.createElement("button"); btnOnce.textContent = "✍️ 仅本次"; btnOnce.title = "只用于这道题";
-  cdiv.appendChild(inp); cdiv.appendChild(btnAdd); cdiv.appendChild(btnOnce);
+  var hint = document.createElement("span");
+  hint.className = "hint";
+  cdiv.appendChild(inp); cdiv.appendChild(hint);
   sel.onchange = function(){
-    cdiv.style.display = (this.value === "__custom__") ? "flex" : "none";
-    if (this.value !== "__custom__") inp.value = "";
+    if (this.value === "__add__") {
+      cdiv.style.display = "flex"; inp.value = ""; hint.textContent = "将加入题库配置";
+    } else if (this.value === "__once__") {
+      cdiv.style.display = "flex"; inp.value = ""; hint.textContent = "仅用于本题";
+    } else {
+      cdiv.style.display = "none"; inp.value = "";
+    }
   };
-  btnAdd.onclick = function(){
-    var nv = inp.value.trim();
-    if (!nv) return;
-    fetch("/api/meta-value/add", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({bank: state.bank, field: k, value: nv})
-    }).then(function(r){ return r.json(); }).then(function(dd){
-      if (dd.ok) {
-        var o = document.createElement("option"); o.value = nv; o.text = nv; o.selected = true;
-        sel.insertBefore(o, cust);
-        sel.value = nv;
-        cdiv.style.display = "none";
-        qs("#editMsg").textContent = "✅ 已加入题库配置";
-      } else {
-        qs("#editMsg").textContent = "❌ " + (dd.error || "添加失败");
-      }
-    });
-  };
-  btnOnce.onclick = function(){
-    sel.value = "__custom__";
-    cdiv.style.display = "flex";
-    qs("#editMsg").textContent = "✍️ 该值仅用于本题";
-  };
-  row.appendChild(lab); row.appendChild(sel); row.appendChild(cdiv);
+  // 删除字段按钮
+  var del = document.createElement("button");
+  del.className = "meta-del"; del.textContent = "✕"; del.title = "删除该字段";
+  del.onclick = function(){ row.remove(); };
+  row.appendChild(lab); row.appendChild(sel); row.appendChild(del); row.appendChild(cdiv);
   box.appendChild(row);
 }
 function addField(){
-  var name = prompt("输入新字段名（如：出处、备注人）");
-  if (!name || !name.trim()) return;
-  name = name.trim();
-  var exist = false;
-  qs("#editMeta").querySelectorAll("select[data-key]").forEach(function(s){ if (s.getAttribute("data-key") === name) exist = true; });
-  if (exist) { alert("字段已存在"); return; }
-  addMetaRow(qs("#editMeta"), name, "", []);
+  var box = qs("#editMeta");
+  var existing = qs("#newFieldRow");
+  if (existing) { existing.querySelector("input").focus(); return; }
+  // 在编辑栏内展开输入行（不用浏览器 prompt 弹窗）
+  var row = document.createElement("div");
+  row.id = "newFieldRow";
+  row.style.display = "flex";
+  row.style.gap = "4px";
+  row.style.alignItems = "center";
+  var inp = document.createElement("input");
+  inp.placeholder = "输入新字段名（如：出处）";
+  var ok = document.createElement("button"); ok.textContent = "添加";
+  var cancel = document.createElement("button"); cancel.textContent = "取消";
+  row.appendChild(inp); row.appendChild(ok); row.appendChild(cancel);
+  box.appendChild(row);
+  inp.focus();
+  function commit(){
+    var name = inp.value.trim();
+    if (!name) return;
+    var exist = false;
+    box.querySelectorAll("select[data-key]").forEach(function(s){ if (s.getAttribute("data-key") === name) exist = true; });
+    if (exist) { alert("字段已存在"); return; }
+    addMetaRow(box, name, "", []);
+    row.remove();
+  }
+  ok.onclick = commit;
+  cancel.onclick = function(){ row.remove(); };
+  inp.addEventListener("keydown", function(e){ if (e.key === "Enter") commit(); if (e.key === "Escape") row.remove(); });
 }
 function closeEdit(){ qs("#editModal").classList.remove("show"); }
 function saveEdit(){
   if (!editing) return;
   var meta = {};
+  var addToConfig = [];
   qs("#editMeta").querySelectorAll("select[data-key]").forEach(function(sel){
     var k = sel.getAttribute("data-key");
     var val = "";
-    if (sel.value === "__custom__") {
+    if (sel.value === "__add__" || sel.value === "__once__") {
       var inp = sel.parentElement.querySelector("input");
       val = inp ? inp.value.trim() : "";
+      if (val !== "" && sel.value === "__add__") addToConfig.push({k: k, v: val});
     } else {
       val = sel.value;
     }
     if (val !== "") meta[k] = val;
   });
-  var body = {
-    bank: state.bank, id: editing.id,
-    file: qs("#editFile").value.trim(),
-    meta: meta,
-    prompt: qs("#editPrompt").value,
-    answer: qs("#editAnswer").value,
-    explain: qs("#editExplain").value,
-    note: qs("#editNote").value
+  // 先写入配置（新增值），再保存题目
+  var doSave = function(){
+    var body = {
+      bank: state.bank, id: editing.id,
+      file: qs("#editFile").value.trim(),
+      meta: meta,
+      prompt: qs("#editPrompt").value,
+      answer: qs("#editAnswer").value,
+      explain: qs("#editExplain").value,
+      note: qs("#editNote").value
+    };
+    fetch("/api/question/save", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d.ok) {
+        qs("#editMsg").textContent = "✅ 已保存";
+        closeEdit();
+        loadAll();
+      } else {
+        qs("#editMsg").textContent = "❌ " + (d.error || "保存失败");
+      }
+    });
   };
-  fetch("/api/question/save", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(body)
-  }).then(function(r){ return r.json(); }).then(function(d){
-    if (d.ok) {
-      qs("#editMsg").textContent = "✅ 已保存";
-      closeEdit();
-      loadAll();
-    } else {
-      qs("#editMsg").textContent = "❌ " + (d.error || "保存失败");
-    }
-  });
+  if (addToConfig.length > 0) {
+    var pending = addToConfig.length, failed = false;
+    addToConfig.forEach(function(ac){
+      fetch("/api/meta-value/add", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({bank: state.bank, field: ac.k, value: ac.v})
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (!d.ok) failed = true;
+        if (--pending === 0) {
+          if (failed) qs("#editMsg").textContent = "⚠️ 部分新值写入配置失败";
+          doSave();
+        }
+      });
+    });
+  } else {
+    doSave();
+  }
 }
 
 function openSettings(){
   qs("#modal").classList.add("show");
   qs("#linkMsg").textContent = "";
   qs("#linkInput").value = "";
-  qs("#linkInput").focus();
+  loadCfgGlobal();
+  loadCfgProject();
 }
 function closeSettings(){ qs("#modal").classList.remove("show"); }
+
+// 页签切换
+qs("#tabGlobal").onclick = function(){
+  qs("#tabGlobal").classList.add("active");
+  qs("#tabProject").classList.remove("active");
+  qs("#cfgGlobal").hidden = false;
+  qs("#cfgProject").hidden = true;
+};
+qs("#tabProject").onclick = function(){
+  qs("#tabProject").classList.add("active");
+  qs("#tabGlobal").classList.remove("active");
+  qs("#cfgGlobal").hidden = true;
+  qs("#cfgProject").hidden = false;
+};
+
+// 加载全局配置
+function loadCfgGlobal(){
+  Promise.all([
+    fetch("/api/config/global").then(function(r){ return r.json(); }),
+    fetch("/api/banks").then(function(r){ return r.json(); })
+  ]).then(function(res){
+    var g = res[0], banks = res[1];
+    qs("#cfgGlobalPath").textContent = g.path;
+    // 题库目录 → 名称映射
+    var nameMap = {};
+    banks.forEach(function(b){ nameMap[b.dir] = b.name; });
+    // 默认配置
+    var dbox = qs("#cfgDefaults");
+    dbox.innerHTML = "";
+    Object.keys(g.defaults || {}).forEach(function(k){
+      var it = document.createElement("div");
+      it.className = "cfg-item";
+      it.innerHTML = "<span>" + esc(k) + "</span><span class=\"vals\">" + esc(g.defaults[k]) + "</span>";
+      dbox.appendChild(it);
+    });
+    // 题库列表（全部对等，当前打开的不可移除）
+    var lbox = qs("#cfgLinks");
+    lbox.innerHTML = "";
+    (g.links || []).forEach(function(l, i){
+      var isCur = (l === state.bank);
+      var it = document.createElement("div");
+      it.className = "cfg-item";
+      it.innerHTML = "<span><b>" + esc(nameMap[l] || l) + "</b> " + (isCur ? "<b style=\"color:var(--accent)\">（当前）</b>" : "") + "<div class=\"path\">" + esc(l) + "</div></span>" + (isCur ? "<span class=\"vals\">不可移除</span>" : "<span style=\"display:flex;gap:4px\"><button class=\"cfg-open\" title=\"打开该题库\">打开</button><button class=\"cfg-del\" title=\"移除\">✕</button></span>");
+      if (!isCur) {
+        it.querySelector(".cfg-open").onclick = function(){ openBank(l); };
+        it.querySelector(".cfg-del").onclick = function(){ removeLink(i); };
+      }
+      lbox.appendChild(it);
+    });
+    if (!g.links || g.links.length === 0) lbox.innerHTML = '<span class="tip">（暂无题库，请添加）</span>';
+    // 字段定义
+    var fbox = qs("#cfgFields");
+    fbox.innerHTML = "";
+    (g.meta_fields || []).forEach(function(f){
+      var it = document.createElement("div");
+      it.className = "cfg-item";
+      it.innerHTML = "<span>" + esc(f.label || f.name) + " <small style=\"color:var(--muted)\">" + esc(f.name) + "</small></span><span class=\"vals\">" + esc((f.values||[]).join(" / ")) + "</span>";
+      fbox.appendChild(it);
+    });
+  });
+}
+
+// 打开题库（切换下拉栏选中）
+function openBank(dir){
+  var sel = qs("#bankSel");
+  sel.value = dir;
+  state.bank = dir;
+  state.filters = {};
+  closeSettings();
+  loadAll();
+}
+
+// 加载项目配置
+function loadCfgProject(){
+  fetch("/api/config/project?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(p){
+    qs("#cfgProjectPath").textContent = p.path;
+    qs("#cfgProjectInfo").innerHTML =
+      "<div class=\"cfg-item\"><span>题库名</span><span class=\"vals\">" + esc(p.bank) + "</span></div>" +
+      "<div class=\"cfg-item\"><span>运行软件</span><span class=\"vals\">" + esc(p.app) + "</span></div>";
+    var fbox = qs("#cfgProjectFields");
+    fbox.innerHTML = "";
+    (p.meta_fields || []).forEach(function(f){
+      var it = document.createElement("div");
+      it.className = "cfg-item";
+      it.innerHTML = "<span>" + esc(f.label || f.name) + "</span><span class=\"vals\">" + esc((f.values||[]).join(" / ")) + "</span>";
+      fbox.appendChild(it);
+    });
+    if (!p.meta_fields || p.meta_fields.length === 0) fbox.innerHTML = '<span class="tip">（暂无自定义字段）</span>';
+  });
+}
+
+// 解除链接（写全局配置）
+function removeLink(i){
+  fetch("/api/config/global").then(function(r){ return r.json(); }).then(function(g){
+    var links = g.links || [];
+    links.splice(i, 1);
+    return fetch("/api/config/global/save", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({links: links})
+    });
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      loadCfgGlobal();
+      loadBanks();
+    }
+  });
+}
 
 function doLink(){
   var dir = qs("#linkInput").value.trim();

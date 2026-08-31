@@ -20,19 +20,24 @@ type Bank struct {
 
 // connectBank 连接题库文件夹：
 // 验证目录存在、读取 .requiz/config.yaml、扫描目录下所有题目 md 文件
+// 统一使用绝对路径（保证题库对等比较与配置一致性）
 func connectBank(dir string) (*Bank, error) {
-	info, err := os.Stat(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, fmt.Errorf("题库目录不存在: %s（%w）", dir, err)
+		return nil, fmt.Errorf("题库目录解析失败: %s（%w）", dir, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("题库目录不存在: %s（%w）", abs, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("路径不是文件夹: %s", dir)
+		return nil, fmt.Errorf("路径不是文件夹: %s", abs)
 	}
 
-	bank := &Bank{Dir: dir, App: "requiz"}
+	bank := &Bank{Dir: abs, App: "requiz"}
 
 	// 读取 .requiz/config.yaml（容错：不存在也能连，只是没有配置信息）
-	cfgPath := filepath.Join(dir, ".requiz", "config.yaml")
+	cfgPath := filepath.Join(abs, ".requiz", "config.yaml")
 	if data, err := os.ReadFile(cfgPath); err == nil {
 		parsingLinks := false
 		for _, l := range strings.Split(string(data), "\n") {
@@ -48,7 +53,7 @@ func connectBank(dir string) (*Bank, error) {
 				p := strings.TrimSpace(strings.TrimPrefix(l, "-"))
 				if p != "" {
 					if !filepath.IsAbs(p) {
-						p = filepath.Join(dir, p)
+						p = filepath.Join(abs, p)
 					}
 					bank.Links = append(bank.Links, p)
 				}
@@ -73,10 +78,10 @@ func connectBank(dir string) (*Bank, error) {
 
 	if bank.Name == "" {
 		// 无 config 时回退用目录名
-		bank.Name = filepath.Base(dir)
+		bank.Name = filepath.Base(abs)
 	}
 
-	qs, err := scanQuestions(dir)
+	qs, err := scanQuestions(abs)
 	if err != nil {
 		return nil, err
 	}
