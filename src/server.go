@@ -1680,6 +1680,7 @@ function renderCard(){
   var it = items[state.cardIdx];
   var q = it.q;
   var box = buildBox(it);
+  toggleExpand(box, q); // V1.4.2：卡片模式自动一级展开
   var nav = document.createElement("div");
   nav.className = "card-nav";
   var prev = document.createElement("button"); prev.textContent = "◀ 上一题";
