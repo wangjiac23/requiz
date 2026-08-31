@@ -259,12 +259,14 @@ func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
 			return
 		}
 		var body struct {
-			Bank    string `json:"bank"`
-			ID      string `json:"id"`
-			Prompt  string `json:"prompt"`
-			Answer  string `json:"answer"`
-			Explain string `json:"explain"`
-			Note    string `json:"note"`
+			Bank    string            `json:"bank"`
+			ID      string            `json:"id"`
+			File    string            `json:"file"`
+			Meta    map[string]string `json:"meta"`
+			Prompt  string            `json:"prompt"`
+			Answer  string            `json:"answer"`
+			Explain string            `json:"explain"`
+			Note    string            `json:"note"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.ID == "" {
 			http.Error(w, `{"error":"需要 id 字段"}`, http.StatusBadRequest)
@@ -279,6 +281,41 @@ func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
 			return
+		}
+		// 改名（题目名 = 文件名，同目录内重命名）
+		if body.File != "" && body.File != q.File {
+			if strings.ContainsAny(body.File, `/\`) || body.File == "." || body.File == ".." {
+				http.Error(w, `{"error":"非法文件名"}`, http.StatusBadRequest)
+				return
+			}
+			newPath := filepath.Join(filepath.Dir(q.Path), body.File)
+			if _, err := os.Stat(newPath); err == nil {
+				http.Error(w, `{"error":"同名文件已存在"}`, http.StatusBadRequest)
+				return
+			}
+			if err := os.Rename(q.Path, newPath); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+				return
+			}
+			q.Path = newPath
+			q.File = body.File
+		}
+		// 元数据更新（app/bank/path 系统字段除外；空值删除该字段）
+		if body.Meta != nil {
+			for k, v := range body.Meta {
+				if k == "app" || k == "bank" || k == "path" {
+					continue
+				}
+				if strings.TrimSpace(v) == "" {
+					delete(q.Meta, k)
+				} else {
+					q.Meta[k] = v
+				}
+			}
+		}
+		// path 元数据 = 相对题库目录路径（改名后自动维护）
+		if rel, err := filepath.Rel(b.Dir, q.Path); err == nil {
+			q.Meta["path"] = filepath.ToSlash(rel)
 		}
 		q.Prompt = body.Prompt
 		q.Answer = body.Answer
@@ -637,6 +674,10 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 <div id="editModal">
   <div class="modal-box">
     <h3>编辑题目 <span id="editId" class="meta"></span></h3>
+    <label class="lbl">题目名（文件名）</label>
+    <input id="editFile" type="text">
+    <label class="lbl">元数据（留空则删除该字段）</label>
+    <div id="editMeta"></div>
     <label class="lbl">题干</label>
     <textarea id="editPrompt" rows="5"></textarea>
     <label class="lbl">答案</label>
@@ -762,6 +803,9 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #editModal .modal-box{width:560px;max-width:92%}
 #editModal textarea{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px;resize:vertical}
 #editModal .lbl{font-size:12px;color:var(--muted)}
+#editModal input[type=text]{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px}
+#editMeta{display:grid;grid-template-columns:1fr 2fr;gap:4px 8px;margin-bottom:8px}
+#editMeta input{width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px}
 .q-actions{display:flex;gap:8px;margin-bottom:10px}
 .q-actions button{font-size:12px;padding:4px 10px}
 #reloadBtn{padding:6px 10px}
@@ -1093,6 +1137,17 @@ var editing = null;
 function openEdit(d, q){
   editing = q;
   qs("#editId").textContent = q.id;
+  qs("#editFile").value = q.file;
+  // 元数据输入框（常用键优先，其余自定义键追加；app/bank/path 系统字段不展示）
+  var metaBox = qs("#editMeta");
+  metaBox.innerHTML = "";
+  var keys = ["id","chapter","grade","difficulty","importance","source","knowledge","type"];
+  var shown = {};
+  keys.forEach(function(k){ if (d.meta && d.meta[k]) { addMetaRow(metaBox, k, d.meta[k]); shown[k] = true; } });
+  keys.forEach(function(k){ if (!shown[k]) addMetaRow(metaBox, k, ""); });
+  Object.keys(d.meta || {}).forEach(function(k){
+    if (keys.indexOf(k) < 0 && ["app","bank","path"].indexOf(k) < 0) addMetaRow(metaBox, k, d.meta[k]);
+  });
   qs("#editPrompt").value = d.prompt || "";
   qs("#editAnswer").value = d.answer || "";
   qs("#editExplain").value = d.explain || "";
@@ -1100,11 +1155,32 @@ function openEdit(d, q){
   qs("#editMsg").textContent = "";
   qs("#editModal").classList.add("show");
 }
+function addMetaRow(box, k, v){
+  var row = document.createElement("div");
+  row.style.display = "contents";
+  var lab = document.createElement("span");
+  lab.className = "lbl";
+  lab.textContent = tagName(k);
+  lab.style.paddingTop = "5px";
+  var inp = document.createElement("input");
+  inp.setAttribute("data-key", k);
+  inp.value = v || "";
+  row.appendChild(lab);
+  row.appendChild(inp);
+  box.appendChild(row);
+}
 function closeEdit(){ qs("#editModal").classList.remove("show"); }
 function saveEdit(){
   if (!editing) return;
+  var meta = {};
+  qs("#editMeta").querySelectorAll("input").forEach(function(inp){
+    var k = inp.getAttribute("data-key");
+    if (inp.value.trim() !== "") meta[k] = inp.value.trim();
+  });
   var body = {
     bank: state.bank, id: editing.id,
+    file: qs("#editFile").value.trim(),
+    meta: meta,
     prompt: qs("#editPrompt").value,
     answer: qs("#editAnswer").value,
     explain: qs("#editExplain").value,
