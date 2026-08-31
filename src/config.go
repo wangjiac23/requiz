@@ -24,6 +24,12 @@ type GlobalConfig struct {
 	Favorites  []string // 收藏（"题库目录|题目ID"）
 }
 
+// QuestionList 自定义题目清单（组卷）
+type QuestionList struct {
+	Name string
+	IDs  []string
+}
+
 // ProjectConfig 项目（题库）配置（bank/app + 该题库自定义字段）
 type ProjectConfig struct {
 	App         string
@@ -31,6 +37,8 @@ type ProjectConfig struct {
 	Version     string
 	QuestionDir string
 	MetaFields  []FieldDef
+	Favorites   []string // 收藏题目 id（V1.5.0）
+	Lists       []QuestionList
 }
 
 // ---------- 路径 ----------
@@ -197,13 +205,15 @@ func writeGlobalConfig(g GlobalConfig) error {
 
 // ---------- 项目配置 ----------
 
-// parseProjectConfig 解析题库 .requiz/config.yaml（bank/app/version/questions_dir/meta_fields）
+// parseProjectConfig 解析题库 .requiz/config.yaml（bank/app/version/questions_dir/meta_fields/favorites/lists）
 func parseProjectConfig(data string) ProjectConfig {
 	p := ProjectConfig{}
 	section := ""
 	inField := false
 	inFieldValues := false
 	curIdx := -1
+	curList := -1
+	inListIDs := false
 	for _, line := range strings.Split(data, "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -218,6 +228,7 @@ func parseProjectConfig(data string) ProjectConfig {
 				section = k
 				inField = false
 				inFieldValues = false
+				inListIDs = false
 				switch k {
 				case "app":
 					p.App = v
@@ -229,6 +240,25 @@ func parseProjectConfig(data string) ProjectConfig {
 					p.QuestionDir = v
 				}
 			}
+		case indent == 2 && section == "favorites" && strings.HasPrefix(trim, "-"):
+			p.Favorites = append(p.Favorites, strings.TrimSpace(trim[1:]))
+		case indent == 2 && section == "lists":
+			inListIDs = false
+			if strings.HasPrefix(trim, "- ") {
+				rest := strings.TrimSpace(trim[2:])
+				ql := QuestionList{}
+				if idx := strings.Index(rest, ":"); idx > 0 {
+					ql.Name = strings.TrimSpace(rest[idx+1:])
+				}
+				p.Lists = append(p.Lists, ql)
+				curList = len(p.Lists) - 1
+			}
+		case indent == 4 && section == "lists" && curList >= 0:
+			if strings.HasPrefix(trim, "ids:") {
+				inListIDs = true
+			}
+		case indent >= 4 && inListIDs && curList >= 0 && strings.HasPrefix(trim, "-"):
+			p.Lists[curList].IDs = append(p.Lists[curList].IDs, strings.TrimSpace(trim[1:]))
 		case indent == 2 && section == "meta_fields":
 			inFieldValues = false
 			if strings.HasPrefix(trim, "- ") {
@@ -280,6 +310,24 @@ func (p ProjectConfig) serialize() string {
 				b.WriteString("    values:\n")
 				for _, v := range f.Values {
 					fmt.Fprintf(&b, "      - %s\n", v)
+				}
+			}
+		}
+	}
+	if len(p.Favorites) > 0 {
+		b.WriteString("favorites:\n")
+		for _, id := range p.Favorites {
+			fmt.Fprintf(&b, "  - %s\n", id)
+		}
+	}
+	if len(p.Lists) > 0 {
+		b.WriteString("lists:\n")
+		for _, l := range p.Lists {
+			fmt.Fprintf(&b, "  - name: %s\n", l.Name)
+			if len(l.IDs) > 0 {
+				b.WriteString("    ids:\n")
+				for _, id := range l.IDs {
+					fmt.Fprintf(&b, "      - %s\n", id)
 				}
 			}
 		}

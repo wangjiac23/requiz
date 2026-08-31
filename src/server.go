@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ---------- Store：多题库状态（主题库 + 链接题库） ----------
@@ -165,6 +166,9 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/config/project", apiConfigProjectHandler(store))
 	mux.HandleFunc("/api/favorite", apiFavoriteHandler(store))
 	mux.HandleFunc("/api/favorites", apiFavoritesHandler(store))
+	mux.HandleFunc("/api/lists", apiListsHandler(store))
+	mux.HandleFunc("/api/lists/save", apiListsSaveHandler(store))
+	mux.HandleFunc("/api/export", apiExportHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -554,9 +558,9 @@ func apiConfigProjectHandler(s *Store) http.HandlerFunc {
 	}
 }
 
-// ---------- V1.4.0：收藏 API ----------
+// ---------- V1.5.0：收藏（项目配置）/ 清单 / 导出 ----------
 
-// POST /api/favorite {bank, id}：收藏/取消（toggle，存全局配置）
+// POST /api/favorite {bank, id}：收藏/取消（toggle，V1.5.0 存项目配置）
 func apiFavoriteHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -576,64 +580,244 @@ func apiFavoriteHandler(s *Store) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
 			return
 		}
-		q, err := b.find(body.ID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
-			return
-		}
-		key := b.Dir + "|" + q.ID()
-		gc := s.global
+		pc, _ := readProjectConfig(b.Dir)
 		idx := -1
-		for i, f := range gc.Favorites {
-			if f == key {
+		for i, f := range pc.Favorites {
+			if f == body.ID {
 				idx = i
 				break
 			}
 		}
 		favorited := idx < 0
 		if idx >= 0 {
-			gc.Favorites = append(gc.Favorites[:idx], gc.Favorites[idx+1:]...)
+			pc.Favorites = append(pc.Favorites[:idx], pc.Favorites[idx+1:]...)
 		} else {
-			gc.Favorites = append(gc.Favorites, key)
+			pc.Favorites = append(pc.Favorites, body.ID)
 		}
-		if err := writeGlobalConfig(gc); err != nil {
+		if err := writeProjectConfig(b.Dir, pc); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
-		s.mu.Lock()
-		s.global = gc
-		s.mu.Unlock()
 		writeJSON(w, map[string]any{"ok": true, "favorited": favorited})
 	}
 }
 
-// GET /api/favorites：收藏列表（含题目信息）
+// GET /api/favorites?bank= ：收藏列表（id + 动态元数据）
 func apiFavoritesHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.bankByDir(r.URL.Query().Get("bank"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		pc, _ := readProjectConfig(b.Dir)
 		out := []map[string]any{}
-		for _, f := range s.global.Favorites {
-			parts := strings.SplitN(f, "|", 2)
-			if len(parts) != 2 {
-				continue
+		for _, id := range pc.Favorites {
+			if q, err := b.find(id); err == nil {
+				out = append(out, map[string]any{
+					"id":    q.ID(),
+					"file":  q.File,
+					"title": firstLine(q.Prompt),
+					"meta":  q.Meta,
+				})
 			}
-			b, err := s.bankByDir(parts[0])
-			if err != nil {
-				continue
-			}
-			q, err := b.find(parts[1])
-			if err != nil {
-				continue
-			}
-			out = append(out, map[string]any{
-				"bank":  b.Name,
-				"dir":   b.Dir,
-				"id":    q.ID(),
-				"file":  q.File,
-				"title": firstLine(q.Prompt),
-			})
 		}
 		writeJSON(w, out)
 	}
+}
+
+// GET /api/lists?bank= ：自定义清单列表（含题目摘要）
+func apiListsHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.bankByDir(r.URL.Query().Get("bank"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		pc, _ := readProjectConfig(b.Dir)
+		out := []map[string]any{}
+		for _, l := range pc.Lists {
+			qs := []map[string]any{}
+			for _, id := range l.IDs {
+				if q, err := b.find(id); err == nil {
+					qs = append(qs, map[string]any{"id": q.ID(), "title": firstLine(q.Prompt), "meta": q.Meta})
+				}
+			}
+			out = append(out, map[string]any{"name": l.Name, "ids": l.IDs, "count": len(qs), "questions": qs})
+		}
+		writeJSON(w, out)
+	}
+}
+
+// POST /api/lists {bank, name, ids}：创建/更新清单；{bank, name, action:delete}：删除
+func apiListsSaveHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank   string   `json:"bank"`
+			Name   string   `json:"name"`
+			IDs    []string `json:"ids"`
+			Action string   `json:"action"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.Name == "" {
+			http.Error(w, `{"error":"需要 name 字段"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		pc, _ := readProjectConfig(b.Dir)
+		if body.Action == "delete" {
+			newLists := []QuestionList{}
+			for _, l := range pc.Lists {
+				if l.Name != body.Name {
+					newLists = append(newLists, l)
+				}
+			}
+			pc.Lists = newLists
+		} else {
+			found := false
+			for i := range pc.Lists {
+				if pc.Lists[i].Name == body.Name {
+					pc.Lists[i].IDs = body.IDs
+					found = true
+					break
+				}
+			}
+			if !found {
+				pc.Lists = append(pc.Lists, QuestionList{Name: body.Name, IDs: body.IDs})
+			}
+		}
+		if err := writeProjectConfig(b.Dir, pc); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// POST /api/export {bank, ids, parts, format}：导出题目到 output/（json / html）
+func apiExportHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank   string   `json:"bank"`
+			IDs    []string `json:"ids"`
+			Parts  []string `json:"parts"`
+			Format string   `json:"format"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&body); err != nil || len(body.IDs) == 0 {
+			http.Error(w, `{"error":"需要 ids 字段"}`, http.StatusBadRequest)
+			return
+		}
+		if body.Format == "" {
+			body.Format = "json"
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		// 收集题目
+		qs := []*Question{}
+		for _, id := range body.IDs {
+			if q, err := b.find(id); err == nil {
+				qs = append(qs, q)
+			}
+		}
+		if len(qs) == 0 {
+			http.Error(w, `{"error":"没有可导出的题目"}`, http.StatusBadRequest)
+			return
+		}
+		if err := os.MkdirAll("output", 0755); err != nil {
+			http.Error(w, `{"error":"output 目录创建失败"}`, http.StatusInternalServerError)
+			return
+		}
+		stamp := time.Now().Format("20060102-150405")
+		var path string
+		var content []byte
+		if body.Format == "html" {
+			path = filepath.Join("output", fmt.Sprintf("export-%s.html", stamp))
+			content = []byte(exportHTML(qs, body.Parts, b.Name))
+		} else {
+			path = filepath.Join("output", fmt.Sprintf("export-%s.json", stamp))
+			content = []byte(exportJSON(qs, body.Parts))
+		}
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "path": path, "count": len(qs)})
+	}
+}
+
+// exportJSON 导出题目为 JSON
+func exportJSON(qs []*Question, parts []string) string {
+	out := []map[string]any{}
+	for _, q := range qs {
+		item := map[string]any{"id": q.ID(), "file": q.File, "meta": q.Meta}
+		for _, p := range parts {
+			switch p {
+			case "prompt":
+				item["prompt"] = q.Prompt
+			case "answer":
+				item["answer"] = q.Answer
+			case "explain":
+				item["explain"] = q.Explain
+			case "note":
+				item["note"] = q.Note
+			}
+		}
+		out = append(out, item)
+	}
+	data, _ := json.MarshalIndent(out, "", "  ")
+	return string(data)
+}
+
+// exportHTML 导出题目为可打印 HTML（浏览器打印存 PDF / Word 兼容）
+func exportHTML(qs []*Question, parts []string, bankName string) string {
+	partName := map[string]string{"prompt": "题目", "answer": "答案", "explain": "解析", "note": "备注"}
+	var b strings.Builder
+	b.WriteString("<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"utf-8\"><title>requiz 导出</title>")
+	b.WriteString("<style>body{font-family:'Microsoft YaHei',sans-serif;max-width:900px;margin:0 auto;padding:30px;color:#222}.q{border:1px solid #ccc;border-radius:8px;padding:14px 18px;margin:14px 0;page-break-inside:avoid}h2{font-size:16px;margin:0 0 8px}pre{white-space:pre-wrap;font-family:inherit;margin:6px 0}.sec-title{font-weight:bold;margin-top:8px;color:#555}</style></head><body>")
+	fmt.Fprintf(&b, "<h1>题库：%s（%d 题）</h1>", bankName, len(qs))
+	for i, q := range qs {
+		fmt.Fprintf(&b, "<div class=\"q\"><h2>%d. %s</h2>", i+1, q.ID())
+		for _, p := range parts {
+			var content string
+			switch p {
+			case "prompt":
+				content = q.Prompt
+			case "answer":
+				content = q.Answer
+			case "explain":
+				content = q.Explain
+			case "note":
+				content = q.Note
+			}
+			if content != "" {
+				fmt.Fprintf(&b, "<div class=\"sec-title\">%s</div><pre>%s</pre>", partName[p], htmlEscape(content))
+			}
+		}
+		b.WriteString("</div>")
+	}
+	b.WriteString("</body></html>")
+	return b.String()
+}
+
+func htmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }
 
 // ---------- 题目视图模型 ----------
@@ -840,6 +1024,7 @@ func indexHandler(s *Store) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		indexTpl.Execute(w, indexData{CSS: indexCSS, AppJS: indexJS})
 	}
 }
@@ -923,7 +1108,14 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 <div id="body">
   <div id="sidebarWrap">
     <div id="sidebarCol">
-      <div id="sidebarHead"><span>题目导航</span><button id="pinSidebar" title="固定侧边栏（固定时拖拽只调宽不隐藏）">📌</button></div>
+      <div id="sidebarHead">
+        <div id="sideTabs">
+          <button class="stab active" data-tab="tree" title="题库题目导航">题库</button>
+          <button class="stab" data-tab="fav" title="收藏题目导航">收藏</button>
+          <button class="stab" data-tab="lists" title="自定义题目清单">清单</button>
+        </div>
+        <button id="pinSidebar" title="固定侧边栏（固定时拖拽只调宽不隐藏）">📌</button>
+      </div>
       <aside id="sidebar"></aside>
     </div>
     <div id="resizer" title="拖拽调整宽度（拖到最窄隐藏）"></div>
@@ -934,6 +1126,9 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
       <button class="mode" data-mode="split" title="双栏浏览">📑 双栏</button>
       <button class="mode" data-mode="card" title="卡片浏览">🃏 卡片</button>
       <span style="flex:1"></span>
+      <button id="selectBtn" title="选择模式（勾选题目）">☑ 选择</button>
+      <button id="saveListBtn" title="将选中题目存为清单" style="display:none">📋 存清单</button>
+      <button id="exportBtn" title="导出选中题目" style="display:none">📤 导出</button>
       <button id="displayBtn" title="自定义显示字段">⚙ 字段</button>
       <button id="favFilterBtn" title="只看收藏的题目">☆ 收藏</button>
     </div>
@@ -972,7 +1167,7 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     </div>
   </div>
 </div>
-<div id="displayModal">
+<div id="displayModal" hidden>
   <div class="modal-box" style="width:360px">
     <h3>显示字段清单 <small style="color:var(--muted);font-weight:400">勾选要在题目上显示的字段</small></h3>
     <div id="displayList"></div>
@@ -983,7 +1178,29 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     </div>
   </div>
 </div>
-<div id="editModal">
+<div id="exportModal" hidden>
+  <div class="modal-box" style="width:380px">
+    <h3>导出题目 <span id="exportCount" class="meta"></span></h3>
+    <label class="lbl">导出部分</label>
+    <div id="exportParts">
+      <label style="display:block;margin:3px 0"><input type="checkbox" value="prompt" checked> 题干</label>
+      <label style="display:block;margin:3px 0"><input type="checkbox" value="answer"> 答案</label>
+      <label style="display:block;margin:3px 0"><input type="checkbox" value="explain"> 解析</label>
+      <label style="display:block;margin:3px 0"><input type="checkbox" value="note"> 备注</label>
+    </div>
+    <label class="lbl">导出格式</label>
+    <select id="exportFormat" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
+      <option value="json">JSON（自定义清单）</option>
+      <option value="html">HTML（浏览器打印存 PDF / Word 可打开）</option>
+    </select>
+    <div id="exportMsg" class="tip"></div>
+    <div class="modal-actions">
+      <button id="exportOk">导出</button>
+      <button id="exportCancel">取消</button>
+    </div>
+  </div>
+</div>
+<div id="editModal" hidden>
   <div class="modal-box">
     <h3>编辑题目 <span id="editId" class="meta"></span></h3>
     <label class="lbl">题目名（文件名）</label>
@@ -1062,7 +1279,7 @@ window.addEventListener("DOMContentLoaded", function(){
 const indexCSS = `
 :root{--bg:#f7f8fa;--panel:#fff;--border:#e1e4e8;--text:#24292f;--muted:#586069;--accent:#0969da;--accent-bg:#ddf4ff;--sidebar:#f5f6f8;--hover:#eef2f5}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%}
+html,body{margin:0;height:100%;overflow:hidden}
 body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
 #topbar{display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
 .brand{font-size:16px;font-weight:600}
@@ -1082,12 +1299,16 @@ button:hover{background:var(--hover)}
 #filters .f-item{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px}
 #filters select{max-width:150px;padding:4px 6px;border:1px solid var(--border);border-radius:6px}
 #filters .clear{border:none;background:none;color:var(--accent);cursor:pointer;font-size:12px}
-#body{flex:1;display:flex;overflow:hidden}
+#body{flex:1;min-height:0;display:flex;overflow:hidden}
 #sidebarWrap{display:flex}
 #sidebarWrap.hidden{display:none}
 #sidebarCol{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
 #sidebarHead{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;font-size:12px;color:var(--muted);background:var(--sidebar);border-bottom:1px solid var(--border)}
 #sidebarHead button{padding:2px 6px;font-size:12px}
+#sideTabs{display:flex;gap:2px}
+.stab{border:1px solid transparent;background:none;color:var(--muted);cursor:pointer;font-size:12px;padding:3px 8px;border-radius:6px}
+.stab.active{background:var(--accent-bg);color:var(--accent)}
+.sel-cb{margin-right:6px;accent-color:var(--accent)}
 #sidebar{flex:1;width:260px;min-width:120px;max-width:480px;background:var(--sidebar);overflow-y:auto;padding:8px 6px}
 #resizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent}
 #resizer:hover,#resizer.active{background:var(--accent-bg)}
@@ -1136,6 +1357,8 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #editModal.show{display:flex}
 #displayModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #displayModal.show{display:flex}
+#exportModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#exportModal.show{display:flex}
 #displayList{display:flex;flex-direction:column;gap:4px;margin:10px 0}
 #displayList label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 #editModal .modal-box{width:560px;max-width:92%;max-height:85vh;overflow-y:auto}
@@ -1172,7 +1395,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 `
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {} };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {} };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -1226,11 +1449,27 @@ function init(){
     this.classList.toggle("active", state.favOnly);
     loadAll();
   };
+  qs("#selectBtn").onclick = toggleSelectMode;
+  qs("#exportBtn").onclick = openExport;
+  qs("#saveListBtn").onclick = saveSelectedAsList;
+  qs("#exportOk").onclick = doExport;
+  qs("#exportCancel").onclick = closeExport;
   qs("#displayBtn").onclick = openDisplay;
   qs("#displayOk").onclick = saveDisplay;
   qs("#displayCancel").onclick = closeDisplay;
+  document.querySelectorAll("#sideTabs .stab").forEach(function(b){
+    b.onclick = function(){ switchSideTab(b.getAttribute("data-tab")); };
+  });
   document.querySelectorAll("#mainToolbar .mode").forEach(function(b){
     b.onclick = function(){ setMode(b.getAttribute("data-mode")); };
+  });
+  // V1.4.3：键盘导航（双栏/卡片模式：上/左=上一题，下/右=下一题）
+  document.addEventListener("keydown", function(e){
+    if (state.mode !== "split" && state.mode !== "card") return;
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+    if (e.key === "ArrowUp" || e.key === "ArrowLeft") { navQuestion(-1); e.preventDefault(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowRight") { navQuestion(1); e.preventDefault(); }
   });
   qs("#metaFoldBtn").onclick = function(){
     var folded = qs("#editMeta").classList.toggle("folded");
@@ -1371,8 +1610,127 @@ function toggleFav(q, btn){
   });
 }
 
+// ---------- V1.5.0：侧边栏页签 / 选择 / 导出 ----------
+
+// 切换侧边栏页签（题库 / 收藏 / 清单）
+function switchSideTab(tab){
+  state.sideTab = tab;
+  document.querySelectorAll("#sideTabs .stab").forEach(function(b){
+    b.classList.toggle("active", b.getAttribute("data-tab") === tab);
+  });
+  renderSidebar();
+}
+
+// 收藏导航
+function renderFavSidebar(sb){
+  fetch("/api/favorites?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(favs){
+    sb.innerHTML = "";
+    if (favs.length === 0) { sb.innerHTML = '<div class="empty">暂无收藏（题目上点 ☆ 收藏）</div>'; return; }
+    favs.forEach(function(f){
+      var it = document.createElement("div");
+      it.className = "q-item";
+      it.textContent = f.id + " · " + (f.title || f.file);
+      it.title = f.file;
+      it.onclick = function(){ selectQuestion({id: f.id}); };
+      sb.appendChild(it);
+    });
+  });
+}
+
+// 清单导航
+function renderListsSidebar(sb){
+  fetch("/api/lists?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(lists){
+    sb.innerHTML = "";
+    if (lists.length === 0) { sb.innerHTML = '<div class="empty">暂无清单（选择题目后「📋 存清单」）</div>'; return; }
+    lists.forEach(function(l){
+      var head = document.createElement("div");
+      head.className = "pkg-head";
+      head.innerHTML = "▸ " + esc(l.name) + ' <span class="cnt">' + l.count + "</span>";
+      head.onclick = function(){
+        var body = head.nextElementSibling;
+        if (body) {
+          var open = body.style.display !== "none";
+          body.style.display = open ? "none" : "block";
+          head.textContent = (open ? "▸ " : "▾ ") + l.name + " (" + l.count + ")";
+        }
+      };
+      sb.appendChild(head);
+      var body = document.createElement("div");
+      body.className = "pkg-body";
+      body.style.display = "none";
+      (l.questions || []).forEach(function(q){
+        var it = document.createElement("div");
+        it.className = "q-item";
+        it.textContent = q.id + " · " + (q.title || q.file);
+        it.onclick = function(){ selectQuestion({id: q.id}); };
+        body.appendChild(it);
+      });
+      sb.appendChild(body);
+    });
+  });
+}
+
+// 选择模式切换
+function toggleSelectMode(){
+  state.selectMode = !state.selectMode;
+  var btn = qs("#selectBtn");
+  btn.classList.toggle("active", state.selectMode);
+  btn.textContent = state.selectMode ? "☑ 选择中" : "☑ 选择";
+  qs("#saveListBtn").style.display = state.selectMode ? "" : "none";
+  qs("#exportBtn").style.display = state.selectMode ? "" : "none";
+  renderMain();
+}
+
+function toggleSelect(q){
+  var key = q.id;
+  if (state.selected[key]) delete state.selected[key];
+  else state.selected[key] = true;
+}
+
+// 选中题目存为清单（组卷）
+function saveSelectedAsList(){
+  var ids = Object.keys(state.selected);
+  if (ids.length === 0) { alert("请先勾选题目"); return; }
+  var name = prompt("清单名称（如：期中复习卷）");
+  if (!name || !name.trim()) return;
+  fetch("/api/lists/save", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bank: state.bank, name: name.trim(), ids: ids})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) { alert("✅ 已保存清单「" + name.trim() + "」（" + ids.length + " 题）"); }
+  });
+}
+
+// 导出弹窗
+function openExport(){
+  var ids = Object.keys(state.selected);
+  if (ids.length === 0) { alert("请先勾选题目"); return; }
+  qs("#exportCount").textContent = "（" + ids.length + " 道）";
+  qs("#exportMsg").textContent = "";
+  qs("#exportModal").classList.add("show");
+}
+function closeExport(){ qs("#exportModal").classList.remove("show"); }
+function doExport(){
+  var ids = Object.keys(state.selected);
+  var parts = [];
+  qs("#exportParts").querySelectorAll("input:checked").forEach(function(cb){ parts.push(cb.value); });
+  var format = qs("#exportFormat").value;
+  if (parts.length === 0) { qs("#exportMsg").textContent = "请至少勾选一个部分"; return; }
+  fetch("/api/export", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bank: state.bank, ids: ids, parts: parts, format: format})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) qs("#exportMsg").textContent = "✅ 已导出 " + d.count + " 题 → " + d.path;
+    else qs("#exportMsg").textContent = "❌ " + (d.error || "导出失败");
+  });
+}
+
 function renderSidebar(){
   var sb = qs("#sidebar");
+  if (state.sideTab === "fav") { renderFavSidebar(sb); return; }
+  if (state.sideTab === "lists") { renderListsSidebar(sb); return; }
   sb.innerHTML = "";
   state.tree.forEach(function(pkg, i){
     var head = document.createElement("div");
@@ -1533,8 +1891,10 @@ function buildBox(it, opts){
   box.className = "qbox" + (opts.active ? " active" : "");
   box.setAttribute("data-id", q.id);
   var meta = metaTagsOf(q.meta);
+  var cbHtml = "";
+  if (state.selectMode) cbHtml = '<input type="checkbox" class="sel-cb" ' + (state.selected[q.id] ? "checked" : "") + '>';
   box.innerHTML =
-    '<div class="qbox-head"><span class="qbox-id">' + esc(q.id) + '</span>' +
+    '<div class="qbox-head">' + cbHtml + '<span class="qbox-id">' + esc(q.id) + '</span>' +
     '<span class="qbox-tags">' + meta + '</span>' +
     '<span class="qbox-actions"><button class="fav-btn" title="收藏">' + (isFav(q) ? "⭐" : "☆") + '</button>' +
     '<button class="exp-btn">▼ 展开</button></span></div>' +
@@ -1544,6 +1904,10 @@ function buildBox(it, opts){
     e.stopPropagation();
     toggleFav(q, this);
   };
+  var selCb = box.querySelector(".sel-cb");
+  if (selCb) {
+    selCb.onclick = function(e){ e.stopPropagation(); toggleSelect(q); };
+  }
   box.querySelector(".exp-btn").onclick = function(e){
     e.stopPropagation();
     toggleExpand(box, q);
@@ -1691,6 +2055,24 @@ function renderCard(){
   nav.appendChild(prev); nav.appendChild(cnt); nav.appendChild(next);
   main.appendChild(box);
   main.appendChild(nav);
+}
+
+// V1.4.3：键盘导航上一题/下一题
+function navQuestion(delta){
+  var items = visibleQuestions();
+  if (items.length === 0) return;
+  if (state.mode === "card") {
+    state.cardIdx = (state.cardIdx + delta + items.length) % items.length;
+    renderCard();
+  } else if (state.mode === "split") {
+    var idx = 0;
+    for (var i = 0; i < items.length; i++) {
+      if (state.splitSel === (items[i].pkg + "|" + items[i].q.id)) { idx = i; break; }
+    }
+    idx = (idx + delta + items.length) % items.length;
+    state.splitSel = items[idx].pkg + "|" + items[idx].q.id;
+    renderSplit();
+  }
 }
 
 // 选中题目（侧边栏点击）：按模式处理
