@@ -455,12 +455,18 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   </div>
 </header>
 <div id="filtersWrap">
-  <div id="filters"></div>
+  <div id="filtersBar">
+    <div id="filters"></div>
+    <button id="pinFilters" title="固定筛选栏（固定时拖拽只调高不隐藏）">📌</button>
+  </div>
   <div id="filtersResizer" title="拖拽调整高度（拖到最矮隐藏）"></div>
 </div>
 <div id="body">
   <div id="sidebarWrap">
-    <aside id="sidebar"></aside>
+    <div id="sidebarCol">
+      <div id="sidebarHead"><span>题目导航</span><button id="pinSidebar" title="固定侧边栏（固定时拖拽只调宽不隐藏）">📌</button></div>
+      <aside id="sidebar"></aside>
+    </div>
     <div id="resizer" title="拖拽调整宽度（拖到最窄隐藏）"></div>
   </div>
   <main id="main"><div class="empty">加载中…</div></main>
@@ -525,7 +531,9 @@ button{padding:6px 12px;border:1px solid var(--border);border-radius:6px;backgro
 button:hover{background:var(--hover)}
 #filtersWrap{display:flex;flex-direction:column}
 #filtersWrap.hidden{display:none}
-#filters{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px;background:var(--panel);align-items:center;overflow-y:auto}
+#filtersBar{display:flex;align-items:center}
+#filters{flex:1;display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px;background:var(--panel);align-items:center;overflow-y:auto}
+#filtersBar button{padding:4px 8px;margin:4px;font-size:12px}
 #filtersResizer{height:5px;cursor:row-resize;flex-shrink:0;background:transparent}
 #filtersResizer:hover,#filtersResizer.active{background:var(--accent-bg)}
 #filters .f-item{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px}
@@ -534,9 +542,13 @@ button:hover{background:var(--hover)}
 #body{flex:1;display:flex;overflow:hidden}
 #sidebarWrap{display:flex}
 #sidebarWrap.hidden{display:none}
-#sidebar{width:260px;min-width:120px;max-width:480px;background:var(--sidebar);border-right:1px solid var(--border);overflow-y:auto;padding:8px 6px}
+#sidebarCol{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
+#sidebarHead{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;font-size:12px;color:var(--muted);background:var(--sidebar);border-bottom:1px solid var(--border)}
+#sidebarHead button{padding:2px 6px;font-size:12px}
+#sidebar{flex:1;width:260px;min-width:120px;max-width:480px;background:var(--sidebar);overflow-y:auto;padding:8px 6px}
 #resizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent}
 #resizer:hover,#resizer.active{background:var(--accent-bg)}
+button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
 #main{flex:1;overflow-y:auto;padding:16px}
 .pkg{font-size:13px}
 .pkg-head{display:flex;align-items:center;gap:4px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--text);font-weight:600}
@@ -592,6 +604,8 @@ function init(){
     this.textContent = h ? "⌃" : "⌄";
     this.title = h ? "显示筛选栏" : "隐藏筛选栏";
   };
+  qs("#pinSidebar").onclick = function(){ this.classList.toggle("pinned"); };
+  qs("#pinFilters").onclick = function(){ this.classList.toggle("pinned"); };
   loadBanks();
 }
 
@@ -609,11 +623,15 @@ function init(){
   function onMove(e){
     var w = sw + (e.clientX - sx);
     if (w < 100) {
-      wrap.classList.add("hidden");
-      qs("#toggleSidebar").textContent = "☰";
-      qs("#toggleSidebar").title = "显示侧边栏";
-      onUp();
-      return;
+      if (qs("#pinSidebar").classList.contains("pinned")) {
+        w = 100; // 固定时只调宽不隐藏
+      } else {
+        wrap.classList.add("hidden");
+        qs("#toggleSidebar").textContent = "☰";
+        qs("#toggleSidebar").title = "显示侧边栏";
+        onUp();
+        return;
+      }
     }
     if (w > 480) w = 480;
     sb.style.width = w + "px";
@@ -639,11 +657,15 @@ function init(){
   function onMove(e){
     var h = sh + (e.clientY - sy);
     if (h < 40) {
-      wrap.classList.add("hidden");
-      qs("#toggleFilters").textContent = "⌃";
-      qs("#toggleFilters").title = "显示筛选栏";
-      onUp();
-      return;
+      if (qs("#pinFilters").classList.contains("pinned")) {
+        h = 40; // 固定时只调高不隐藏
+      } else {
+        wrap.classList.add("hidden");
+        qs("#toggleFilters").textContent = "⌃";
+        qs("#toggleFilters").title = "显示筛选栏";
+        onUp();
+        return;
+      }
     }
     if (h > 160) h = 160;
     f.style.height = h + "px";
