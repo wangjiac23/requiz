@@ -2,3 +2,7 @@ app: requiz
 bank: 题库A
 version: 0.0.0
 questions_dir: ""
+favorites:
+  - M001
+  - M002
+  - M003

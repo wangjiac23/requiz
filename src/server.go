@@ -615,6 +615,7 @@ func apiFavoritesHandler(s *Store) http.HandlerFunc {
 		for _, id := range pc.Favorites {
 			if q, err := b.find(id); err == nil {
 				out = append(out, map[string]any{
+					"dir":   b.Dir,
 					"id":    q.ID(),
 					"file":  q.File,
 					"title": firstLine(q.Prompt),
@@ -1566,10 +1567,10 @@ function loadAll(){
     state.tree = tree;
     renderSidebar();
     renderFilters();
-    // 加载收藏状态
-    fetch("/api/favorites").then(function(r){ return r.json(); }).then(function(favs){
+    // 加载收藏状态（V1.5.1：带 bank 参数 + 用 state.bank 建 key）
+    fetch("/api/favorites?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(favs){
       state.favs = {};
-      favs.forEach(function(f){ state.favs[f.dir + "|" + f.id] = true; });
+      favs.forEach(function(f){ state.favs[state.bank + "|" + f.id] = true; });
       renderMain();
     });
   });
