@@ -44,6 +44,8 @@ func Serve(args []string) error {
 	mux.HandleFunc("/api/lists/save", apiListsSaveHandler(store))
 	mux.HandleFunc("/api/export", apiExportHandler(store))
 	mux.HandleFunc("/api/export/open", apiExportOpenHandler(store))
+	mux.HandleFunc("/image", apiImageHandler(store))
+	mux.HandleFunc("/api/image/upload", apiImageUploadHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -271,11 +273,6 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 <div id="testSetupModal" hidden>
   <div class="modal-box" style="width:400px">
     <h3>🧪 测试设置 <span id="testSetupName" class="meta"></span></h3>
-    <label class="lbl">计分</label>
-    <select id="tsScored" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
-      <option value="1">✅ 计分（每题 10 分）</option>
-      <option value="0">🚫 不计分</option>
-    </select>
     <label class="lbl">计时</label>
     <select id="tsTimer" style="width:100%;padding:6px;margin:4px 0 8px;border:1px solid var(--border);border-radius:6px">
       <option value="none">⏱ 不计时</option>
@@ -311,6 +308,18 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <div class="modal-actions">
       <button id="exportOk">导出</button>
       <button id="exportCancel">取消</button>
+    </div>
+  </div>
+</div>
+<div id="imgModal" hidden>
+  <div class="modal-box" style="width:420px">
+    <h3>📷 图片/附件 <span id="imgQ" class="meta"></span></h3>
+    <p class="tip">上传到 <code>image/&lt;题目&gt;/</code>，编辑题目时引用：<code>![名称](image/题目/文件名)</code></p>
+    <input type="file" id="imgFile" style="width:100%;margin:8px 0;padding:6px;border:1px solid var(--border);border-radius:6px">
+    <div id="imgMsg" class="tip"></div>
+    <div class="modal-actions">
+      <button id="imgOk">上传</button>
+      <button id="imgCancel">关闭</button>
     </div>
   </div>
 </div>

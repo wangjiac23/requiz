@@ -89,6 +89,10 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #exportModal.show{display:flex}
 #testSetupModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #testSetupModal.show{display:flex}
+#imgModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#imgModal.show{display:flex}
+.md-img{max-width:100%;border-radius:8px;margin:8px 0;display:block}
+#imgModal code{background:#f6f8fa;padding:1px 6px;border-radius:4px;font-size:12px;word-break:break-all}
 #displayList{display:flex;flex-direction:column;gap:4px;margin:10px 0}
 #displayList label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 #editModal .modal-box{width:560px;max-width:92%;max-height:85vh;overflow-y:auto}
@@ -209,6 +213,8 @@ function init(){
   qs("#saveListBtn").onclick = saveSelectedAsList;
   qs("#exportOk").onclick = doExport;
   qs("#tsOk").onclick = confirmTestSetup;
+  qs("#imgOk").onclick = doImgUpload;
+  qs("#imgCancel").onclick = closeImgUpload;
   qs("#tsCancel").onclick = function(){ qs("#testSetupModal").classList.remove("show"); state.pendingTest = null; };
   qs("#tsTimer").onchange = function(){ qs("#tsMinWrap").hidden = (this.value !== "countdown"); };
   qs("#exportCancel").onclick = closeExport;
@@ -476,12 +482,11 @@ function startTest(list){
 // 确认设置并开始
 function confirmTestSetup(){
   var list = state.pendingTest;
-  var scored = qs("#tsScored").value === "1";
   var timerType = qs("#tsTimer").value;
   var minutes = parseInt(qs("#tsMinutes").value, 10) || 10;
   state.testing = {
     name: list.name, qs: (list.questions || []), answers: {},
-    scored: scored, timerType: timerType, minutes: minutes,
+    scored: false, timerType: timerType, minutes: minutes,
     elapsed: 0, remainMs: (timerType === "countdown" ? minutes * 60000 : 0), report: null
   };
   state.sideTab = "tree";
@@ -519,8 +524,7 @@ function renderTest(){
   if (!t) return;
   var bar = document.createElement("div");
   bar.className = "test-bar";
-  bar.innerHTML = "<b>🧪 测试：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题</span>" +
-    (t.scored ? " <span class='cnt'>计分</span>" : " <span class='cnt'>不计分</span>");
+  bar.innerHTML = "<b>🧪 测试：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题</span>";
   if (t.timerType !== "none") bar.innerHTML += ' <span id="testTimer" class="test-timer">' + (t.timerType === "countdown" ? "⏳ " + fmtTime(Math.ceil(t.remainMs/1000)) : "⏲ 0:00") + "</span>";
   var exitBtn = document.createElement("button");
   exitBtn.textContent = "✕ 退出";
@@ -535,7 +539,7 @@ function renderTest(){
     card.innerHTML =
       '<div class="qbox-head"><span class="qbox-id">' + (i + 1) + ". " + esc(q.id) + '</span>' +
       '<span class="qbox-tags">' + metaTagsOf(q.meta) + '</span></div>' +
-      '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + '</div>' +
+      '<div class="qbox-prompt content">' + mdImages(esc(q.prompt || q.title), state.bank) + '</div>' +
       answerArea(q);
     main.appendChild(card);
     renderMath(card);
@@ -547,7 +551,7 @@ function renderTest(){
   main.appendChild(done);
 }
 
-// 完成测试：收集答案 → 评分 → 报告
+// 完成测试：收集答案 → 展示报告（V1.7.2：用户自评，无自动评分）
 function finishTest(){
   if (!state.testing || state.testing.report) return;
   collectAnswers();
@@ -556,153 +560,43 @@ function finishTest(){
   else if (t.timerType === "countdown") t.elapsed = Math.round((t.minutes * 60000 - t.remainMs) / 1000);
   clearInterval(state.timerInt);
   t.report = true;
-  // 客观题自动评
-  t.qs.forEach(function(q){
-    var type = (q.meta && q.meta.type) || "";
-    if (type === "选择题" || type === "填空题") {
-      autoGrade(q);
-    }
-  });
   renderReport();
 }
 
-// 客观题自动评分（比对参考答案，容错空白/量词/LaTeX）
-function autoGrade(q){
-  var t = state.testing;
-  var ans = (t.answers[q.id] || "").trim();
-  var ref = q.answer || "";
-  var ok = false;
-  var type = (q.meta && q.meta.type) || "";
-  if (type === "选择题") {
-    // 选项字母 → 选项文本比对
-    var opts = extractOptions(q.prompt || "");
-    var selText = "";
-    opts.forEach(function(o){ if (o.key === ans) selText = o.text; });
-    ok = gradeMatch(selText || ans, ref);
-  } else {
-    ok = gradeMatch(ans, ref);
-  }
-  q._grade = ok ? "对" : "错";
-  q._score = ok ? 10 : 0;
-  q._ref = ref;
-}
-
-// 容错比对：归一化后相等或互相包含
-function gradeMatch(userAns, refAns){
-  var u = normalizeAns(userAns), r = normalizeAns(refAns);
-  if (u === "" || r === "") return false;
-  if (u === r) return true;
-  if (u.length >= 2 && r.indexOf(u) >= 0) return true;
-  if (r.length >= 2 && u.indexOf(r) >= 0) return true;
-  return false;
-}
-
-function normalizeAns(s){
-  return s.replace(/[\s\n$\{}^_=()（）\[\]【】。，,.;；：:、/\|]/g, "").replace(/[个个道]/g, "").toLowerCase();
-}
-
 // 渲染报告
+// 渲染报告（V1.7.2：我的答案 vs 参考答案，用户自评）
 function renderReport(){
   var main = qs("#mainContent");
   main.innerHTML = "";
   var t = state.testing;
-  var scored = t.scored;
-  var correct = 0, totalScore = 0;
-  t.qs.forEach(function(q){ if (q._grade === "对") correct++; if (q._score) totalScore += q._score; });
   var bar = document.createElement("div");
   bar.className = "test-bar report-bar";
-  bar.innerHTML = "<b>📊 测试报告：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题 · 答对 " + correct + " 题" +
-    (t.timerType !== "none" ? " · 用时 " + fmtTime(t.elapsed) : "") +
-    (scored ? " · 得分 " + totalScore + " / " + (t.qs.length * 10) : "") + "</span>";
+  bar.innerHTML = "<b>📊 测试报告：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题" +
+    (t.timerType !== "none" ? " · 用时 " + fmtTime(t.elapsed) : "") + "</span>";
   var backBtn = document.createElement("button");
   backBtn.textContent = "← 返回";
   backBtn.onclick = function(){ state.testing = null; clearInterval(state.timerInt); renderMain(); };
   bar.appendChild(backBtn);
   main.appendChild(bar);
   t.qs.forEach(function(q, i){
-    var type = (q.meta && q.meta.type) || "";
     var card = document.createElement("div");
     card.className = "qbox";
-    var gradeHtml = q._grade ? '<span class="grade ' + (q._grade === "对" ? "right" : "wrong") + '">' + q._grade + (scored ? " (+" + q._score + ")" : "") + "</span>" : "";
     var myAns = t.answers[q.id] ? esc(t.answers[q.id]) : "（未作答）";
     card.innerHTML =
-      '<div class="qbox-head"><span class="qbox-id">' + (i + 1) + ". " + esc(q.id) + '</span>' + gradeHtml + "</div>" +
+      '<div class="qbox-head"><span class="qbox-id">' + (i + 1) + ". " + esc(q.id) + '</span></div>' +
       '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + "</div>" +
-      '<div class="report-ans"><b>我的答案：</b>' + myAns + "</div>";
-    if (type === "解答题") {
-      // 主观题：显示参考答案 + 用户评分
-      card.innerHTML += '<div class="report-ref"><b>参考答案：</b><div class="content">' + esc(q.answer || "（无）") + "</div></div>";
-      card.innerHTML += '<div class="report-grade"><b>主观评分（0-' + (scored ? 10 : 10) + "）</b> <input type='number' class='subj-score' data-id='" + esc(q.id) + "' min='0' max='10' value='" + (q._score || 0) + "'> <button class='subj-ok' data-id='" + esc(q.id) + "'>评分</button></div>";
-    } else {
-      card.innerHTML += '<div class="report-ref"><b>参考答案：</b>' + esc(q.answer || "（无）") + "</div>";
-    }
+      '<div class="report-ans"><b>我的答案：</b><div class="content">' + myAns + "</div></div>" +
+      '<div class="report-ref"><b>参考答案：</b><div class="content">' + esc(q.answer || "（无）") + "</div></div>";
     main.appendChild(card);
     renderMath(card);
   });
-  // 主观题评分按钮
-  main.querySelectorAll(".subj-ok").forEach(function(b){
-    b.onclick = function(){
-      var id = b.getAttribute("data-id");
-      var inp = main.querySelector('.subj-score[data-id="' + id + '"]');
-      var score = parseInt(inp.value, 10) || 0;
-      if (score > 10) score = 10;
-      b.textContent = "✅ " + score + " 分";
-      b.disabled = true;
-      updateTotal();
-    };
-  });
-  // 主观评分后更新总分
-  function updateTotal(){
-    var total = 0, subj = 0;
-    t.qs.forEach(function(q){ if (q._grade === "对") total += 10; });
-    main.querySelectorAll(".subj-ok").forEach(function(b){
-      if (b.disabled) {
-        var id = b.getAttribute("data-id");
-        var inp = main.querySelector('.subj-score[data-id="' + id + '"]');
-        subj += parseInt(inp.value, 10) || 0;
-      }
-    });
-    var tb = main.querySelector(".report-bar .cnt");
-    if (tb) tb.textContent = tb.textContent.replace(/· 得分 [\d]+ \/ [\d]+/, "· 得分 " + (total + subj) + " / " + (t.qs.length * 10));
-  }
 }
 
-// 答题区（按题型）
+// 答题区（V1.7.2：统一单一作答区，用户自评）
 function answerArea(q){
-  var type = (q.meta && q.meta.type) || "";
-  var html = '<div class="test-answer"><b>作答</b> ';
-  if (type === "选择题") {
-    var opts = extractOptions(q.prompt || "");
-    if (opts.length > 0) {
-      html += '<div class="opt-group">';
-      opts.forEach(function(o){
-        html += '<label class="opt"><input type="radio" name="ta' + q.id + '" value="' + esc(o.key) + '"> ' + esc(o.key) + ". " + esc(o.text) + "</label>";
-      });
-      html += "</div>";
-    } else {
-      html += '<input class="ans-input" data-id="' + esc(q.id) + '" placeholder="输入选项字母（如 A）">';
-    }
-  } else if (type === "填空题") {
-    html += '<input class="ans-input" data-id="' + esc(q.id) + '" placeholder="填写答案">';
-  } else {
-    html += '<textarea class="ans-textarea" data-id="' + esc(q.id) + '" rows="4" placeholder="作答"></textarea>';
-  }
-  html += "</div>";
-  return html;
+  return '<div class="test-answer"><b>作答</b> <textarea class="ans-textarea" data-id="' + esc(q.id) + '" rows="4" placeholder="作答"></textarea></div>';
 }
 
-// 从题干提取选项（A. xxx / B. xxx）
-function extractOptions(prompt){
-  var opts = [];
-  var lines = prompt.split("\n");
-  for (var i = 0; i < lines.length; i++) {
-    var m = lines[i].match(/^\s*([A-Z])\.\s*(.+)$/);
-    if (m && m[1].charCodeAt(0) - 65 === opts.length) {
-      opts.push({key: m[1], text: m[2].trim()});
-    }
-  }
-  return opts;
-}
 
 // 收集答案
 function collectAnswers(){
@@ -760,6 +654,33 @@ function openExportFile(p, action){
   }).then(function(r){ return r.json(); }).then(function(d){
     if (!d.ok) alert(d.error || "操作失败");
   });
+}
+
+// V1.8.0：图片上传
+var imgQ = null;
+function openImgUpload(q){
+  imgQ = q;
+  qs("#imgQ").textContent = "（" + q.id + "）";
+  qs("#imgFile").value = "";
+  qs("#imgMsg").textContent = "";
+  qs("#imgModal").classList.add("show");
+}
+function closeImgUpload(){ qs("#imgModal").classList.remove("show"); }
+function doImgUpload(){
+  var f = qs("#imgFile").files[0];
+  if (!f || !imgQ) { qs("#imgMsg").textContent = "请选择文件"; return; }
+  var fd = new FormData();
+  fd.append("bank", state.bank);
+  fd.append("id", imgQ.id);
+  fd.append("file", f);
+  qs("#imgMsg").textContent = "上传中…";
+  fetch("/api/image/upload", {method: "POST", body: fd})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        qs("#imgMsg").innerHTML = "✅ 已上传<br>引用语法：<code>" + esc(d.markdown) + "</code><br><span style='color:var(--muted)'>编辑题目粘贴即可显示</span>";
+      } else qs("#imgMsg").textContent = "❌ " + (d.error || "上传失败");
+    }).catch(function(){ qs("#imgMsg").textContent = "❌ 请求失败"; });
 }
 
 // 导出弹窗
@@ -1009,6 +930,17 @@ function saveDisplay(){
   renderMain();
 }
 
+// V1.8.0：解析 Markdown 图片语法 ![alt](image/xxx) → img 标签
+function mdImages(text, bank){
+  return text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function(m, alt, src){
+    var f = src;
+    if (f.indexOf("./") === 0) f = f.slice(2);
+    if (f.indexOf("image/") !== 0) return m;
+    var url = "/image?bank=" + encodeURIComponent(bank || state.bank) + "&file=" + encodeURIComponent(f);
+    return '<img src="' + url + '" alt="' + esc(alt) + '" class="md-img" onerror="this.remove()">';
+  });
+}
+
 function metaTagsOf(meta){
   var html = "";
   loadDisplay().forEach(function(k){
@@ -1035,7 +967,7 @@ function buildBox(it, opts){
     '<span class="qbox-tags">' + meta + '</span>' +
     '<span class="qbox-actions"><button class="fav-btn" title="收藏">' + (isFav(q) ? "⭐" : "☆") + '</button>' +
     '<button class="exp-btn">▼ 展开</button></span></div>' +
-    '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + '</div>' +
+    '<div class="qbox-prompt content">' + mdImages(esc(q.prompt || q.title), state.bank) + '</div>' +
     '<div class="qbox-detail" hidden></div>';
   box.querySelector(".fav-btn").onclick = function(e){
     e.stopPropagation();
@@ -1064,7 +996,7 @@ function toggleExpand(box, q){
     if (det.getAttribute("data-loaded") !== "1") {
       det.innerHTML = '<span class="tip">加载中…</span>';
       fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
-        var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button></div>';
+        var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button><button id="btnImg">📷 图片</button></div>';
         var secs = [["答案", d.answer], ["解析", d.explain], ["备注", d.note]];
         secs.forEach(function(s){
           if (s[1]) html += '<div class="sec"><button class="sec-btn" data-title="' + esc(s[0]) + '">▸ ' + esc(s[0]) + '</button><div class="sec-body" hidden><div class="content">' + esc(s[1]) + "</div></div></div>";
@@ -1073,6 +1005,7 @@ function toggleExpand(box, q){
         det.innerHTML = html;
         det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
         det.querySelector("#btnEdit").onclick = function(){ openEdit(d, q); };
+        det.querySelector("#btnImg").onclick = function(){ openImgUpload(q); };
         det.querySelectorAll(".sec-btn").forEach(function(sb){
           sb.onclick = function(e){
             e.stopPropagation(); // 阻止冒泡到盒子（避免收起详情）
@@ -1156,14 +1089,14 @@ function renderSplit(){
 // 双栏右侧详情（完整展示，公式渲染）
 function loadSplitDetail(right, q){
   fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
-    var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button></div>';
+    var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button><button id="btnImg">📷 图片</button></div>';
     html += '<div class="qbox-head"><span class="qbox-id">' + esc(q.id) + "</span><span style='flex:1'></span>";
     html += '<button class="fav-btn">' + (isFav(q) ? "⭐" : "☆") + "</button></div>";
     html += metaTagsOf(d.meta || {});
-    if (d.prompt) html += "<div><b>题目</b><div class='content'>" + esc(d.prompt) + "</div></div>";
-    if (d.answer) html += "<div><b>答案</b><div class='content'>" + esc(d.answer) + "</div></div>";
-    if (d.explain) html += "<div><b>解析</b><div class='content'>" + esc(d.explain) + "</div></div>";
-    if (d.note) html += "<div><b>备注</b><div class='content'>" + esc(d.note) + "</div></div>";
+    if (d.prompt) html += "<div><b>题目</b><div class='content'>" + mdImages(esc(d.prompt), state.bank) + "</div></div>";
+    if (d.answer) html += "<div><b>答案</b><div class='content'>" + mdImages(esc(d.answer), state.bank) + "</div></div>";
+    if (d.explain) html += "<div><b>解析</b><div class='content'>" + mdImages(esc(d.explain), state.bank) + "</div></div>";
+    if (d.note) html += "<div><b>备注</b><div class='content'>" + mdImages(esc(d.note), state.bank) + "</div></div>";
     right.innerHTML = html;
     var fb = right.querySelector(".fav-btn");
     if (fb) fb.onclick = function(){ toggleFav(q, this); };
@@ -1171,6 +1104,8 @@ function loadSplitDetail(right, q){
     if (bo) bo.onclick = function(){ openLocal(q); };
     var be = right.querySelector("#btnEdit");
     if (be) be.onclick = function(){ openEdit(d, q); };
+    var bi = right.querySelector("#btnImg");
+    if (bi) bi.onclick = function(){ openImgUpload(q); };
     renderMath(right);
   });
 }
@@ -1247,10 +1182,10 @@ function loadDetail(q, det, card){
     html += '<button id="btnOpen">📂 打开本地</button>';
     html += '<button id="btnEdit">✏️ 编辑</button>';
     html += '</div>';
-    if (d.prompt) html += "<div><b>题目</b><div class=\"content\">" + esc(d.prompt) + "</div></div>";
-    if (d.answer) html += "<div><b>答案</b><div class=\"content\">" + esc(d.answer) + "</div></div>";
-    if (d.explain) html += "<div><b>解析</b><div class=\"content\">" + esc(d.explain) + "</div></div>";
-    if (d.note) html += "<div><b>备注</b><div class=\"content\">" + esc(d.note) + "</div></div>";
+    if (d.prompt) html += "<div><b>题目</b><div class=\"content\">" + mdImages(esc(d.prompt), state.bank) + "</div></div>";
+    if (d.answer) html += "<div><b>答案</b><div class=\"content\">" + mdImages(esc(d.answer), state.bank) + "</div></div>";
+    if (d.explain) html += "<div><b>解析</b><div class=\"content\">" + mdImages(esc(d.explain), state.bank) + "</div></div>";
+    if (d.note) html += "<div><b>备注</b><div class=\"content\">" + mdImages(esc(d.note), state.bank) + "</div></div>";
     if (!html) html = '<span class="tip">（无更多内容）</span>';
     det.innerHTML = html;
     det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
