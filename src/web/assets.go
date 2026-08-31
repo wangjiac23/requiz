@@ -120,6 +120,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 .ans-textarea{width:100%;padding:8px;margin-top:6px;border:1px solid var(--border);border-radius:6px;font-size:14px;resize:vertical;font-family:inherit}
 .test-done{margin:16px auto;display:block;padding:10px 30px;font-size:14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer}
 .test-timer{font-weight:bold;color:var(--accent)}
+.sel-tip{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--accent-bg);color:var(--accent);border-radius:8px;margin-bottom:12px;font-size:13px}
 .grade{font-size:13px;font-weight:bold;margin-left:8px}
 .grade.right{color:#1a7f37}
 .grade.wrong{color:#d1242f}
@@ -149,7 +150,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [], testing: null, pendingTest: null, timerInt: null };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [], selList: null, testing: null, pendingTest: null, timerInt: null };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -214,10 +215,11 @@ function init(){
   qs("#displayBtn").onclick = openDisplay;
   qs("#displayOk").onclick = saveDisplay;
   qs("#displayCancel").onclick = closeDisplay;
-  // V1.7.0：点主区域空白取消目录选择
+  // V1.1.7.0：点主区域空白取消目录/题组选择
   qs("#mainContent").addEventListener("click", function(e){
-    if ((e.target === this || e.target.classList.contains("empty")) && state.selDirs.length > 0) {
+    if ((e.target === this || e.target.classList.contains("empty")) && (state.selDirs.length > 0 || state.selList)) {
       state.selDirs = [];
+      state.selList = null;
       renderSidebar();
       renderMain();
     }
@@ -426,10 +428,15 @@ function renderListsSidebar(sb){
       var nm = document.createElement("span");
       nm.className = "dir-name";
       nm.textContent = "📁 " + l.name;
+      // V1.7.1：点击题组名 → 主区域只查看该题组题目（非测试模式）
       nm.onclick = function(e){
         e.stopPropagation();
-        exp.click();
+        if (state.selList && state.selList.name === l.name) state.selList = null;
+        else state.selList = {name: l.name, ids: l.ids};
+        renderSidebar();
+        renderMain();
       };
+      head.classList.toggle("sel", !!(state.selList && state.selList.name === l.name));
       var cnt = document.createElement("span");
       cnt.className = "cnt";
       cnt.textContent = l.count;
@@ -930,6 +937,12 @@ function visibleQuestions(){
   walkTree(function(q){
     if (state.favOnly && !isFav(q)) return;
     if (state.selDirs.length > 0 && !inSelDirs(q)) return;
+    // V1.7.1：题组筛选（非测试模式查看题组内题目）
+    if (state.selList) {
+      var inList = false;
+      state.selList.ids.forEach(function(id){ if (id === q.id) inList = true; });
+      if (!inList) return;
+    }
     var hit = true;
     for (var k in state.filters) {
       if (q.meta[k] !== state.filters[k]) { hit = false; break; }
@@ -1083,8 +1096,15 @@ function renderList(){
   var main = qs("#mainContent");
   main.innerHTML = "";
   var items = visibleQuestions();
+  // V1.7.1：题组查看提示条
+  if (state.selList) {
+    var tip = document.createElement("div");
+    tip.className = "sel-tip";
+    tip.innerHTML = "📁 查看题组：<b>" + esc(state.selList.name) + "</b>（" + items.length + " 题，点空白取消）";
+    main.appendChild(tip);
+  }
   if (items.length === 0) {
-    main.innerHTML = '<div class="empty">没有符合条件的题目' + (state.favOnly ? "（收藏中）" : "") + "</div>";
+    main.innerHTML += '<div class="empty">没有符合条件的题目' + (state.favOnly ? "（收藏中）" : "") + "</div>";
     return;
   }
   items.forEach(function(it){
