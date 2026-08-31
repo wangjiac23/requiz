@@ -1207,7 +1207,17 @@ function reloadBank(){
 }
 
 // 打开本地文件（资源管理器定位）
+// 打开本地：Obsidian iframe 环境 → postMessage 通知插件（插件判断库内外）；否则 explorer
 function openLocal(q){
+  if (window.parent !== window) {
+    // Obsidian：通知插件打开（库内新标签页 / 库外资源管理器）
+    fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        window.parent.postMessage({type: "requiz-open", path: d.path}, "*");
+      });
+    return;
+  }
   fetch("/api/open", {
     method: "POST",
     headers: {"Content-Type": "application/json"},

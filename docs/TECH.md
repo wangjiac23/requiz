@@ -111,6 +111,7 @@ requiz/
 - **v1.7.2** ✅（修订）：删除评分（用户自评）；做题区统一单一作答区（无选项/题型控件）
 - **v1.8.0** ✅：图片及附件（题库/image/题目名/ 目录约定 + 渲染 + 上传）
 - **v2.0.0** ✅：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
+- **v2.1.1** ✅（修订）：打开本地智能判断（库内 Obsidian / 库外资源管理器）+ 定位失败资源管理器兜底
 - **v2.0.0** 🚧：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.0** 📝：分布式题目
 - **v2.2.0** 📝：知识库、题库联动
@@ -329,4 +330,7 @@ requiz/
    - 「启动 requiz」按钮（child_process 拉起 exe serve 题库目录 -port）；连接状态检测（fetch /api/banks）
 4. 结构：`obsidian-plugin/manifest.json` + `main.js`（Plugin/ItemView/SettingTab）
 5. CORS：requiz `withCORS` 中间件加 `Access-Control-Allow-Origin: *` + OPTIONS 预检，Obsidian 插件跨源 fetch /api/banks 状态检测可用
+
+### V2.0.0 修订
+1. v2.1.1 打开本地智能化：requiz 前端 iframe 环境 postMessage（`requiz-open` 带路径）；插件 `openInObsidian` 先判断路径是否在当前库内（`getBasePath`）——库内 `getAbstractFileByPath` 多级匹配 + Obsidian 新标签页打开；库外/定位失败用 `explorer.exe /select` 资源管理器兜底（不再报「找不到文件」）
 5. 兼容：requiz 服务零改动；插件仅做 iframe 集成

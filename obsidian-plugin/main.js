@@ -103,6 +103,51 @@ class RequizPlugin extends Plugin {
       callback: () => this.activateView(),
     });
     this.addSettingTab(new RequizSettingTab(this.app, this));
+
+    // V2.1.1：接收 requiz 页面「打开本地」请求（registerDomEvent 防重复注册，插件卸载自动清理）
+    this.registerDomEvent(window, "message", (e) => {
+      if (e.data && e.data.type === "requiz-open" && e.data.path) {
+        this.openInObsidian(e.data.path);
+      }
+    });
+  }
+
+  // V2.1.1：打开本地——判断题目是否位于本库内；库内 Obsidian 新标签页打开，库外资源管理器打开
+  async openInObsidian(absPath) {
+    const base = this.app.vault.adapter.getBasePath();
+    const baseN = (base || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const absN = (absPath || "").replace(/\\/g, "/");
+    // 库外：文件资源管理器打开
+    if (!baseN || !absN.startsWith(baseN)) {
+      this.openInExplorer(absPath);
+      return;
+    }
+    // 库内：Obsidian 新标签页打开（多级匹配定位）
+    let rel = absN.slice(baseN.length + 1);
+    let file = this.app.vault.getAbstractFileByPath(rel);
+    if (!file) {
+      const name = absN.split("/").pop();
+      file =
+        this.app.vault.getFiles().find((f) => f.path === rel) ||
+        this.app.vault.getFiles().find((f) => f.path.endsWith("/" + rel)) ||
+        this.app.vault.getFiles().find((f) => f.name === name && absN.endsWith("/" + f.path));
+    }
+    if (file) {
+      await this.app.workspace.getLeaf("tab").openFile(file);
+    } else {
+      // 库内但定位失败：资源管理器兜底打开（不再报「找不到文件」）
+      this.openInExplorer(absPath);
+    }
+  }
+
+  // 文件资源管理器打开（/select 定位）
+  openInExplorer(absPath) {
+    try {
+      const { exec } = require("child_process");
+      exec('explorer.exe /select,"' + (absPath || "") + '"');
+    } catch (e) {
+      new Notice("⚠️ 无法打开文件：" + absPath);
+    }
   }
 
   onunload() {}
