@@ -115,6 +115,7 @@ requiz/
 - **v2.2.0** ✅：知识库、题库联动（题目链接笔记 `## 链接笔记` + Obsidian 反链）
 - **v3.0.0** ✅：requiz with pi（右侧聊天框 + exec pi CLI，题库为工作目录）
 - **v3.1.0** ✅（修订）：pi 按钮移侧边栏 + 面板拖拽调宽 + 公式渲染 + pi 配置
+- **v3.2.0** ✅：源码整理（四形态梳理：CLI / local requiz / obsidian 插件 / with pi，README 四种形态表 + 源码标注）
 - **v2.0.0** 🚧：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.0** 📝：分布式题目
 - **v2.2.0** 📝：知识库、题库联动

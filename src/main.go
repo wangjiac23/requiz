@@ -1,3 +1,4 @@
+// 【requiz CLI】入口：命令分发（connect/list/read/view/serve）
 // requiz v0.0.0 —— 题库管理系统 CLI
 package main
 
@@ -7,7 +8,7 @@ import (
 	"os"
 )
 
-const version = "3.1.0"
+const version = "3.2.0"
 
 func main() {
 	if len(os.Args) < 2 {

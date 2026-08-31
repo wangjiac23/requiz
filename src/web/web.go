@@ -1,3 +1,4 @@
+// 【local requiz】Web 服务装配（serve）+ 页面模板
 // 由 server.go 拆分生成（V1.6.0 模块化，功能零变化）
 package web
 

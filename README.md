@@ -2,13 +2,24 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v3.1.0（CLI + Localhost 网页 + Obsidian 插件 + pi AI）
+- 版本：v3.2.0（CLI + Localhost 网页 + Obsidian 插件 + pi AI）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
 ## 产品背景
 
 对于学生来说，做题的第一步是读题；对于老师来说，做题的第一步是出题。
+
+## 四种形态（v3.2.0）
+
+| 形态 | 入口 | 启动 | 代码位置 |
+|------|------|------|---------|
+| **requiz CLI** | `requiz connect/list/read/view` | 命令行 | src/main.go（命令分发）+ src/commands.go |
+| **local requiz** | `http://127.0.0.1:8080` | `requiz serve [题库] -port 8080` | src/web/（serve + API + 前端资源） |
+| **requiz for obsidian** | Obsidian 新标签页 | 插件「启动 requiz」或手动 serve | obsidian-plugin/（manifest.json + main.js） |
+| **requiz with pi** | 网页右侧 🤖 聊天框 | serve 后点侧边栏 🤖 | src/web/pi.go（POST /api/pi/chat）+ 前端聊天面板 |
+
+四形态共享同一套题库数据（Obsidian md）与解析/配置核心（src/model、parser、config、quiz）。
 
 出题最常见的方式就是拿来别人出的题。别人出的题每年都在增加，有些成为经典，有些已经消失，可能对于老师来说这些题目大部分都是没新意的老题，但对于每一届的学生来说它们都是新题，用别人出的题已经足够了，实在没有必要自己出题。
 
@@ -173,25 +184,58 @@ go build -o dist/requiz.exe ./src
 # JSON API：/api/banks、/api/tree、/api/questions?tag=知识点&value=xxx、/api/question?id=
 ```
 
-## 项目结构
+## 项目结构（按形态 v3.2.0）
 
 ```
 requiz/
-├── src/                 Go 源码
-├── data/                题库仓库（原始题库，仅存题目）
-│   └── math bank/       数学题库（题库/题册/题组/题目 层级）
-├── demo/                演示区：从 data 选取题目组织成题库
-│   ├── 题库A/           一个可连接的演示题库（题库 = 题目 + .requiz）
-│   │   └── .requiz/     题库A 的连接配置（config.yaml，links 链接题库B）
-│   └── 题库B/           另一个可连接的演示题库（函数专题，演示下拉切换）
-├── test/                测试
-├── dist/                构建产物
-├── docs/                技术文档
-├── output/              导出输出目录
+├── src/                          ⬅️【形态 1+2+4】CLI + local requiz + with pi（Go 源码）
+│   ├── main.go                    【CLI】入口：命令分发
+│   ├── commands.go                【CLI】connect/list/read/view 实现
+│   ├── model/                     ⬅️共享核心：数据模型
+│   │   ├── question.go            Question（含链接笔记 Links）
+│   │   ├── bank.go                Bank
+│   │   └── config.go              GlobalConfig/ProjectConfig/PiConfig
+│   ├── parser/                    ⬅️共享核心：题目解析（ParseQuestion/Serialize）
+│   ├── config/                    ⬅️共享核心：配置读写
+│   ├── quiz/                      ⬅️共享核心：题库连接扫描
+│   └── web/                       【local requiz + with pi】Web 服务
+│       ├── web.go                 服务装配（serve）+ 页面模板 + CORS
+│       ├── api.go                 核心查询 API
+│       ├── config_api.go          配置 API
+│       ├── favorites.go           收藏/清单 API
+│       ├── export.go              导出（JSON/HTML）
+│       ├── image.go               图片附件
+│       ├── pi.go                  【with pi】POST /api/pi/chat
+│       ├── store.go               多题库状态
+│       ├── views.go               视图模型
+│       └── assets.go              前端资源（JS/CSS）
+├── obsidian-plugin/               ⬅️【形态 3】requiz for obsidian
+│   ├── manifest.json              插件清单
+│   ├── main.js                    插件主代码（iframe 标签页）
+│   └── README.md                  安装使用说明
+├── web/katex/                     KaTeX 本地资源（公式渲染）
+├── data/                          题库仓库（原始题库，仅存题目）
+│   └── math bank/                 数学题库（题库/题册/题组/题目 层级）
+├── demo/                          演示区：从 data 选取题目组织成题库
+│   ├── 题库A/                     一个可连接的演示题库（题库 = 题目 + .requiz）
+│   │   ├── .requiz/               题库A 的连接配置
+│   │   └── 笔记/                  知识库笔记（链接笔记演示）
+│   └── 题库B/                     另一个可连接的演示题库
+├── test/                          测试
+├── dist/                          构建产物
+├── docs/                          技术文档
+├── output/                        导出输出目录
 ├── README.md
 ├── LICENSE
-└── .github/             CI 配置
+└── .github/                       CI 配置
 ```
+
+**形态结构总结**：
+- 共享核心（model/parser/config/quiz）被四种形态共用
+- 【CLI】在 src 顶层（main.go + commands.go）
+- 【local requiz】在 src/web/（serve + 全部 API）
+- 【with pi】= src/web/pi.go + 前端聊天面板（assets.go）
+- 【obsidian 插件】独立 obsidian-plugin/ 目录
 
 ## 题目文件格式
 

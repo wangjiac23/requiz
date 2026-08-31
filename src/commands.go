@@ -1,3 +1,4 @@
+// 【requiz CLI】命令实现（connect/list/read/view）
 // CLI 命令实现：connect / list / read / view
 package main
 

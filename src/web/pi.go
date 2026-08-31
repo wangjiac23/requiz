@@ -1,3 +1,4 @@
+// 【requiz with pi】pi 集成（POST /api/pi/chat）
 // pi 集成（V3.0.0）：requiz 右侧聊天框 → exec pi CLI（题库目录为工作目录）
 package web
 

@@ -1,3 +1,4 @@
+// 【requiz for obsidian】Obsidian 插件
 // requiz for Obsidian (V2.0.0)
 // 在 Obsidian 新标签页中 iframe 加载 localhost requiz 网页，复用全部功能
 const { Plugin, PluginSettingTab, Setting, ItemView, Notice } = require("obsidian");
