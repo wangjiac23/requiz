@@ -42,6 +42,19 @@ button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(-
 #mainToolbar{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
 #mainToolbar .mode{padding:4px 10px;font-size:12px}
 #mainToolbar .mode.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+/* V3.0.0：pi 聊天面板 */
+#piPanel{width:0;min-width:0;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--border);transition:width .2s;overflow:hidden}
+#piPanel.open{width:340px;min-width:340px}
+#piPanelHead{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;border-bottom:1px solid var(--border);flex-shrink:0}
+#piPanelHead button{margin-left:auto;padding:2px 8px}
+#piMsgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.pi-msg{max-width:92%;padding:8px 10px;border-radius:8px;white-space:pre-wrap;word-break:break-word}
+.pi-msg.user{align-self:flex-end;background:var(--accent-bg);color:var(--accent)}
+.pi-msg.pi{align-self:flex-start;background:var(--sidebar);border:1px solid var(--border)}
+.pi-msg.waiting{color:var(--muted);font-style:italic}
+#piInputBar{display:flex;gap:6px;padding:8px;border-top:1px solid var(--border);flex-shrink:0}
+#piInput{flex:1;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;resize:none}
+#piSend{padding:6px 14px;align-self:flex-end}
 #mainContent{padding:16px}
 .qbox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:12px}
 .qbox.active{border-color:var(--accent)}
@@ -221,6 +234,11 @@ function init(){
   qs("#displayBtn").onclick = openDisplay;
   qs("#displayOk").onclick = saveDisplay;
   qs("#displayCancel").onclick = closeDisplay;
+  // V3.0.0：pi 聊天面板
+  qs("#piChatBtn").onclick = function(){ qs("#piPanel").classList.add("open"); qs("#piInput").focus(); };
+  qs("#piPanelClose").onclick = function(){ qs("#piPanel").classList.remove("open"); };
+  qs("#piSend").onclick = sendPiMsg;
+  qs("#piInput").addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPiMsg(); } });
   // V1.1.7.0：点主区域空白取消目录/题组选择
   qs("#mainContent").addEventListener("click", function(e){
     if ((e.target === this || e.target.classList.contains("empty")) && (state.selDirs.length > 0 || state.selList)) {
@@ -356,6 +374,33 @@ function setMode(m){
   });
   if (m === "card" && state.cardIdx >= visibleQuestions().length) state.cardIdx = 0;
   renderMain();
+}
+
+// V3.0.0：与 pi 对话（题库为工作目录）
+function sendPiMsg(){
+  var msg = qs("#piInput").value.trim();
+  if (!msg) return;
+  qs("#piInput").value = "";
+  var box = qs("#piMsgs");
+  box.innerHTML += '<div class="pi-msg user">' + esc(msg) + '</div>';
+  var wait = document.createElement("div");
+  wait.className = "pi-msg pi waiting";
+  wait.textContent = "⏳ pi 思考中…";
+  box.appendChild(wait);
+  box.scrollTop = box.scrollHeight;
+  fetch("/api/pi/chat", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({message: msg})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    wait.className = "pi-msg pi";
+    if (d.ok) wait.textContent = d.reply;
+    else wait.textContent = "❌ " + (d.error || "调用失败");
+    box.scrollTop = box.scrollHeight;
+  }).catch(function(){
+    wait.className = "pi-msg pi";
+    wait.textContent = "❌ 请求失败";
+  });
 }
 
 function renderMain(){

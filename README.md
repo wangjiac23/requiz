@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v2.2.0（CLI + Localhost 网页 + Obsidian 插件 + 知识库联动）
+- 版本：v3.0.0（CLI + Localhost 网页 + Obsidian 插件 + pi AI）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -137,6 +137,10 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 **V2.2.0（知识库联动）**
 61. 题目新增 `## 链接笔记` 章节（与题干/答案/解析/备注同级）：存放 Obsidian 双链 `[[笔记名]]`
 62. 网页端渲染链接笔记；编辑保存保留；Obsidian 中打开题目可见右侧栏反向链接
+
+**V3.0.0（requiz with pi）**
+63. 右侧聊天框集成 pi：以当前题库为工作目录对话（辅助解题/组卷/批改，特定功能后续插件+Skill）
+64. `POST /api/pi/chat`：exec pi CLI（`pi --no-session -p <消息>`，cwd=题库目录，90s 超时）
 
 ## 快速开始
 

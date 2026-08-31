@@ -46,6 +46,7 @@ func Serve(args []string) error {
 	mux.HandleFunc("/api/export/open", apiExportOpenHandler(store))
 	mux.HandleFunc("/image", apiImageHandler(store))
 	mux.HandleFunc("/api/image/upload", apiImageUploadHandler(store))
+	mux.HandleFunc("/api/pi/chat", apiPiChatHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -236,9 +237,21 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
       <button id="exportBtn" title="导出选中题目" style="display:none">📤 导出</button>
       <button id="displayBtn" title="自定义显示字段">⚙ 字段</button>
       <button id="favFilterBtn" title="只看收藏的题目">☆ 收藏</button>
+      <button id="piChatBtn" title="与 pi 对话（辅助解题）">🤖 pi</button>
     </div>
     <div id="mainContent"><div class="empty">加载中…</div></div>
   </main>
+  <!-- V3.0.0：右侧 pi 聊天面板 -->
+  <div id="piPanel">
+    <div id="piPanelHead">🤖 pi <small style="color:var(--muted)">（以当前题库为工作目录）</small>
+      <button id="piPanelClose" title="关闭">✕</button>
+    </div>
+    <div id="piMsgs"></div>
+    <div id="piInputBar">
+      <textarea id="piInput" rows="2" placeholder="向 pi 提问（如：帮我解 M001）"></textarea>
+      <button id="piSend">发送</button>
+    </div>
+  </div>
 </div>
 <div id="modal" hidden>
   <div class="modal-box" style="width:600px;max-height:85vh;overflow-y:auto">

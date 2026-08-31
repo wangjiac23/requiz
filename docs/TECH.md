@@ -113,6 +113,7 @@ requiz/
 - **v2.0.0** ✅：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.1** ✅（修订）：打开本地智能判断（库内 Obsidian / 库外资源管理器）+ 定位失败资源管理器兜底
 - **v2.2.0** ✅：知识库、题库联动（题目链接笔记 `## 链接笔记` + Obsidian 反链）
+- **v3.0.0** ✅：requiz with pi（右侧聊天框 + exec pi CLI，题库为工作目录）
 - **v2.0.0** 🚧：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.0** 📝：分布式题目
 - **v2.2.0** 📝：知识库、题库联动
@@ -344,4 +345,14 @@ requiz/
 3. 前端：详情（展开/双栏）渲染「链接笔记」区；编辑弹窗新增链接笔记 textarea（保存写回 md）
 4. Obsidian 反链：题目 md 中 `[[笔记名]]` 由 Obsidian 建立双向链接，右边栏「反向链接」可见
 5. demo：M001 链接 `[[集合的基本概念]]`，配套笔记 `demo/题库A/笔记/集合的基本概念.md`（普通笔记不带 requiz 元数据，不会被当题目）
+
+---
+
+## V3.0.0（requiz with pi）
+
+1. 目标：requiz 右侧聊天框集成 pi，以当前题库为工作目录对话（辅助解题/组卷/批改；特定功能后续插件+Skill）
+2. 后端：`src/web/pi.go` —— `POST /api/pi/chat {message}` → `exec pi --no-session -p <消息>`（cwd=当前题库目录，90s 超时，piPath 可配置）
+3. 前端：右侧聊天面板（🤖 pi 按钮开关，消息列表 + 输入框，Enter 发送）
+4. pi 以题库为工作目录：可读取题目文件、结合知识库笔记辅助解题
+5. 验证：实际 pi 对话成功（回复正常）；无回归
 5. 兼容：requiz 服务零改动；插件仅做 iframe 集成
