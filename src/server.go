@@ -639,10 +639,11 @@ func apiFavoritesHandler(s *Store) http.HandlerFunc {
 // ---------- 题目视图模型 ----------
 
 type questSummary struct {
-	ID    string            `json:"id"`
-	File  string            `json:"file"`
-	Title string            `json:"title"`
-	Meta  map[string]string `json:"meta"`
+	ID     string            `json:"id"`
+	File   string            `json:"file"`
+	Title  string            `json:"title"`
+	Prompt string            `json:"prompt"` // V1.4.1 完整题干
+	Meta   map[string]string `json:"meta"`
 }
 
 type pkgJSON struct {
@@ -670,10 +671,11 @@ func relPath(b *Bank, q *Question) string {
 
 func summaryOf(b *Bank, q *Question) questSummary {
 	return questSummary{
-		ID:    q.ID(),
-		File:  q.File,
-		Title: firstLine(q.Prompt),
-		Meta:  q.Meta,
+		ID:     q.ID(),
+		File:   q.File,
+		Title:  firstLine(q.Prompt),
+		Prompt: q.Prompt,
+		Meta:   q.Meta,
 	}
 }
 
@@ -1536,7 +1538,7 @@ function buildBox(it, opts){
     '<span class="qbox-tags">' + meta + '</span>' +
     '<span class="qbox-actions"><button class="fav-btn" title="收藏">' + (isFav(q) ? "⭐" : "☆") + '</button>' +
     '<button class="exp-btn">▼ 展开</button></span></div>' +
-    '<div class="qbox-prompt content">' + esc(q.title) + '</div>' +
+    '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + '</div>' +
     '<div class="qbox-detail" hidden></div>';
   box.querySelector(".fav-btn").onclick = function(e){
     e.stopPropagation();
@@ -1564,18 +1566,18 @@ function toggleExpand(box, q){
         var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button></div>';
         var secs = [["答案", d.answer], ["解析", d.explain], ["备注", d.note]];
         secs.forEach(function(s){
-          if (s[1]) html += '<div class="sec"><button class="sec-btn">' + esc(s[0]) + ' ▸</button><div class="sec-body" hidden><div class="content">' + esc(s[1]) + "</div></div></div>";
+          if (s[1]) html += '<div class="sec"><button class="sec-btn" data-title="' + esc(s[0]) + '">▸ ' + esc(s[0]) + '</button><div class="sec-body" hidden><div class="content">' + esc(s[1]) + "</div></div></div>";
         });
         if (!html) html = '<span class="tip">（无更多内容）</span>';
         det.innerHTML = html;
         det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
         det.querySelector("#btnEdit").onclick = function(){ openEdit(d, q); };
         det.querySelectorAll(".sec-btn").forEach(function(sb){
-          sb.onclick = function(){
+          sb.onclick = function(e){
+            e.stopPropagation(); // 阻止冒泡到盒子（避免收起详情）
             var body = sb.parentElement.querySelector(".sec-body");
-            var open = body.hidden;
-            body.hidden = !open;
-            sb.textContent = (open ? "▾ " : "▸ ") + sb.textContent.slice(2);
+            body.hidden = !body.hidden;
+            sb.textContent = (body.hidden ? "▸ " : "▾ ") + sb.getAttribute("data-title");
           };
         });
         renderMath(det);
