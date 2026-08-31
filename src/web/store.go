@@ -80,14 +80,6 @@ func containsStr(list []string, s string) bool {
 }
 
 
-// 注入外部题库（V2.1.0：Obsidian 插件复用 Obsidian API 扫描后注入，替换当前 main）
-func (s *Store) InjectBank(name, dir string, qs []*model.Question) {
-	b := &model.Bank{Dir: dir, Name: name, App: "requiz", Questions: qs}
-	s.mu.Lock()
-	s.main = b
-	s.mu.Unlock()
-}
-
 func (s *Store) banks() []*model.Bank {
 	banks := []*model.Bank{s.main}
 	return append(banks, s.links...)

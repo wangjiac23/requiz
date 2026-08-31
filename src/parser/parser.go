@@ -17,11 +17,6 @@ func ParseQuestion(path string) (*model.Question, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParseContent(string(data), path)
-}
-
-// ParseContent 从内容字符串解析题目（V2.1.0：Obsidian 插件注入用）
-func ParseContent(content, path string) (*model.Question, error) {
 	q := &model.Question{
 		Path:  path,
 		File:  filepath.Base(path),
@@ -29,8 +24,7 @@ func ParseContent(content, path string) (*model.Question, error) {
 		Extra: map[string]string{},
 	}
 
-
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(string(data), "\n")
 
 	// --- YAML front matter ---
 	start := 0

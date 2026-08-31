@@ -2,7 +2,6 @@
 package web
 
 import (
-	"requiz/src/model"
 	"requiz/src/quiz"
 	"fmt"
 	"html/template"
@@ -13,31 +12,15 @@ import (
 )
 
 func Serve(args []string) error {
-	dir, port, appOnly, err := parseServeArgs(args)
+	dir, port, err := parseServeArgs(args)
 	if err != nil {
 		return err
 	}
-	// V2.1.0：分号分隔多目录（分布式题库），第一个为主库，其余自动链接；无目录则空库待注入
-	dirs := strings.Split(dir, ";")
-	var bank *model.Bank
-	if dirs[0] == "" || dirs[0] == "." {
-		// 未指定目录（serve -port x）或仅 "."：空库，供 Obsidian 插件注入
-		bank = quiz.CreateEmptyBank("requiz")
-	} else if appOnly {
-		bank, err = quiz.ConnectBankAppOnly(strings.TrimSpace(dirs[0]))
-	} else {
-		bank, err = quiz.ConnectBank(strings.TrimSpace(dirs[0]))
-	}
+	bank, err := quiz.ConnectBank(dir)
 	if err != nil {
 		return err
 	}
 	store := newStore(bank)
-	for _, d := range dirs[1:] {
-		d = strings.TrimSpace(d)
-		if d != "" {
-			_ = store.addLink(d)
-		}
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexHandler(store))
@@ -63,7 +46,6 @@ func Serve(args []string) error {
 	mux.HandleFunc("/api/export/open", apiExportOpenHandler(store))
 	mux.HandleFunc("/image", apiImageHandler(store))
 	mux.HandleFunc("/api/image/upload", apiImageUploadHandler(store))
-	mux.HandleFunc("/api/external/banks", apiExternalBanksHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -90,7 +72,7 @@ func withCORS(h http.Handler) http.Handler {
 	})
 }
 
-func parseServeArgs(args []string) (dir, port string, appOnly bool, err error) {
+func parseServeArgs(args []string) (dir, port string, err error) {
 	port = "8080"
 	dir = "."
 	for i := 0; i < len(args); i++ {
@@ -102,15 +84,13 @@ func parseServeArgs(args []string) (dir, port string, appOnly bool, err error) {
 			}
 			port = args[i+1]
 			i++
-		case "-app-only", "--app-only":
-			appOnly = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				err = fmt.Errorf("未知选项: %s", args[i])
 				return
 			}
 			if dir != "." {
-				err = fmt.Errorf("serve 参数过多（用法：requiz serve [题库目录] [-port 端口] [-app-only]）")
+				err = fmt.Errorf("serve 参数过多（用法：requiz serve [题库目录] [-port 端口]）")
 				return
 			}
 			dir = args[i]
