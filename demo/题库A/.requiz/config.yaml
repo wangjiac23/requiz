@@ -6,3 +6,5 @@ bank: 题库A
 version: 0.0.0
 # 题目根目录（相对题库目录；可空 = 题库目录本身）
 questions_dir: ""
+links:
+  - ../题库B

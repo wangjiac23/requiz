@@ -14,6 +14,7 @@ type Bank struct {
 	Dir       string // 题库目录
 	Name      string // 题库名称（.requiz/config.yaml 的 bank 字段）
 	App       string // 运行软件
+	Links     []string
 	Questions []*Question
 }
 
@@ -33,22 +34,46 @@ func connectBank(dir string) (*Bank, error) {
 	// 读取 .requiz/config.yaml（容错：不存在也能连，只是没有配置信息）
 	cfgPath := filepath.Join(dir, ".requiz", "config.yaml")
 	if data, err := os.ReadFile(cfgPath); err == nil {
+		parsingLinks := false
 		for _, l := range strings.Split(string(data), "\n") {
 			l = strings.TrimSpace(l)
-			if l == "" || strings.HasPrefix(l, "#") {
+			if l == "" {
+				continue
+			}
+			if strings.HasPrefix(l, "#") {
+				continue
+			}
+			// links 列表项：以 "-" 开头的行，属于上一个 "links:" 节
+			if parsingLinks && strings.HasPrefix(l, "-") {
+				p := strings.TrimSpace(strings.TrimPrefix(l, "-"))
+				if p != "" {
+					if !filepath.IsAbs(p) {
+						p = filepath.Join(dir, p)
+					}
+					bank.Links = append(bank.Links, p)
+				}
 				continue
 			}
 			if idx := strings.Index(l, ":"); idx > 0 {
 				k := strings.TrimSpace(l[:idx])
 				v := strings.TrimSpace(l[idx+1:])
-				switch k {
-				case "bank":
+				if k == "links" {
+					parsingLinks = true
+					continue
+				}
+				parsingLinks = false
+				if k == "bank" {
 					bank.Name = v
-				case "app":
+				} else if k == "app" {
 					bank.App = v
 				}
 			}
 		}
+	}
+
+	if bank.Name == "" {
+		// 无 config 时回退用目录名
+		bank.Name = filepath.Base(dir)
 	}
 
 	qs, err := scanQuestions(dir)

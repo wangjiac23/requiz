@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v1.0.0（CLI + Localhost 网页 + JSON API）
+- 版本：v1.1.0（CLI + Localhost 网页 + 多题库 + 标签筛选）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -27,6 +27,11 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 4. 网页浏览题库（题目列表 + 详情）
 5. JSON API（/api/questions、/api/question?id=）
 
+**v1.1.0（Obsidian 化）**
+6. 三栏界面：顶部栏（设置 + 题库下拉）· 左侧边栏（题目包树）· 上边栏（标签筛选）
+7. 多题库链接：⚙ 设置添加链接题库，下拉切换，持久化到 `.requiz/config.yaml` 的 `links`
+8. 新 JSON API：/api/banks、/api/tree，/api/questions 支持 tag/value 筛选
+
 ## 快速开始
 
 ```bash
@@ -45,10 +50,12 @@ go build -o dist/requiz.exe ./src
 # 4. 按需显示（缺省显示题干；可用 --a/--e/--n 组合）
 ./dist/requiz.exe view M001 demo/题库A --a --e
 
-# 5. 启动 localhost 网页服务（v1.0.0）
+# 5. 启动 localhost 网页服务（v1.0.0 → v1.1.0 多题库 + 三栏 UI）
 ./dist/requiz.exe serve demo/题库A -port 8080
-# 浏览器打开 http://127.0.0.1:8080/ 查看题库
-# JSON API：http://127.0.0.1:8080/api/questions
+# 浏览器打开 http://127.0.0.1:8080/ ：
+#   顶部栏 ⚙ 设置 → 添加链接题库（写入 demo/题库A/.requiz/config.yaml 的 links）
+#   下拉栏切换题库；左侧边栏浏览题目包；上边栏按标签筛选
+# JSON API：/api/banks、/api/tree、/api/questions?tag=知识点&value=xxx、/api/question?id=
 ```
 
 ## 项目结构
@@ -59,8 +66,9 @@ requiz/
 ├── data/                题库仓库（原始题库，仅存题目）
 │   └── math bank/       数学题库（题库/题册/题组/题目 层级）
 ├── demo/                演示区：从 data 选取题目组织成题库
-│   └── 题库A/           一个可连接的演示题库（题库 = 题目 + .requiz）
-│       └── .requiz/     题库A 的连接配置（config.yaml）
+│   ├── 题库A/           一个可连接的演示题库（题库 = 题目 + .requiz）
+│   │   └── .requiz/     题库A 的连接配置（config.yaml，links 链接题库B）
+│   └── 题库B/           另一个可连接的演示题库（函数专题，演示下拉切换）
 ├── test/                测试
 ├── dist/                构建产物
 ├── docs/                技术文档

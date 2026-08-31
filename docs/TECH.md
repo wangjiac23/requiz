@@ -84,8 +84,10 @@ requiz/
 
 ## 7. 路线图
 
-- **v1.0.0** ✅：CLI + Localhost
-- **v2.0.0**：引入 Agent
+- **v0.0.0** ✅：CLI 连接题库 + 读取/显示题目
+- **v1.0.0** ✅：CLI + Localhost Web（列表/详情 + JSON API）
+- **v1.1.0** ✅：多题库链接 + 三栏 Obsidian 风格 UI + 标签筛选
+- **v2.0.0**：引入 Agent（组卷/批改/学情分析/pi 集成）
 
 ---
 
@@ -98,3 +100,23 @@ requiz/
    - 首页 `/`：题库信息 + 题目列表（点击进入详情）
    - 详情 `/question?id=<id>`：YAML 元数据标签 + 题干/答案/解析/备注
    - JSON API：`/api/questions`（全部题目）、`/api/question?id=<id>`（单题），为组卷/Agent 预留
+
+---
+
+## V1.1.0（多题库链接 + 三栏 UI + 标签筛选）
+
+1. 技术栈：同 v1.0.0，仅 Go 标准库，零第三方依赖
+2. 新增功能：
+   - **多题库链接**：主题库通过 `.requiz/config.yaml` 的 `links` 节链接其它题库（相对/绝对路径）；无 config 的题库自动回退用目录名。
+   - **三栏界面**（仿 Obsidian）：
+     - 顶部栏：题库下拉切换 + ⚙ 设置按钮
+     - 左侧边栏：题目包树（按顶层目录分组，可折叠）
+     - 上边栏：元数据标签筛选（章节/年级/难度/重要性/来源/知识点/题型，自动聚合有值标签）
+     - 主区域：题目卡片，点击加载题干/答案/解析/备注
+   - **设置链接**：⚙ → 输入目录 → `POST /api/link`（持久化写入主题库 `links` 节，去重）
+3. JSON API 扩展：
+   - `GET /api/banks`：题库列表（name/dir/count/current）
+   - `GET /api/tree?bank=<目录|名称>`：题目包树（含每题 meta）
+   - `GET /api/questions?bank=&tag=&value=`：按元数据标签筛选
+   - `GET /api/question?bank=&id=`：单题详情
+4. 服务端重构：单 bank 闭包 → `Store`（主库 + 链接库缓存），按目录或名称切换；兼容 v1.0.0 全部端点。
