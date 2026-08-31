@@ -15,15 +15,20 @@ type questSummary struct {
 	File   string            `json:"file"`
 	Title  string            `json:"title"`
 	Prompt string            `json:"prompt"` // V1.4.1 完整题干
+	Rel    string            `json:"rel"`    // V1.7.0 相对路径（目录筛选）
 	Meta   map[string]string `json:"meta"`
 }
 
-
-type pkgJSON struct {
+// treeNode 目录树节点（V1.7.0 任意层级文件夹导航）
+type treeNode struct {
 	Name      string         `json:"name"`
 	Path      string         `json:"path"`
-	Count     int            `json:"count"`
+	Dirs      []*treeNode    `json:"dirs"`
 	Questions []questSummary `json:"questions"`
+}
+
+type treeResp struct {
+	Root *treeNode `json:"root"`
 }
 
 
@@ -57,34 +62,51 @@ func summaryOf(b *model.Bank, q *model.Question) questSummary {
 
 // treeOf 把题库题目按顶层目录分组为题目包树
 
-func treeOf(b *model.Bank) []pkgJSON {
-	byPkg := map[string]*pkgJSON{}
-	var order []string
+// treeOf 构建嵌套目录树（任意层级，按文件系统结构）
+func treeOf(b *model.Bank) treeResp {
+	root := &treeNode{Name: b.Name, Path: "", Dirs: []*treeNode{}, Questions: []questSummary{}}
 	for _, q := range b.Questions {
 		rel := relPath(b, q)
-		name := "未分组"
-		path := ""
-		if idx := strings.Index(rel, "/"); idx >= 0 {
-			name = rel[:idx]
-			path = rel[:idx]
+		parts := strings.Split(rel, "/")
+		dirs := parts[:len(parts)-1]
+		node := root
+		cur := ""
+		for _, d := range dirs {
+			cur = joinPath(cur, d)
+			node = getOrCreateDir(node, d, cur)
 		}
-		p, ok := byPkg[name]
-		if !ok {
-			p = &pkgJSON{Name: name, Path: path}
-			byPkg[name] = p
-			order = append(order, name)
+		s := summaryOf(b, q)
+		s.Rel = rel
+		node.Questions = append(node.Questions, s)
+	}
+	sortTree(root)
+	return treeResp{Root: root}
+}
+
+func joinPath(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "/" + b
+}
+
+func getOrCreateDir(node *treeNode, name, path string) *treeNode {
+	for _, d := range node.Dirs {
+		if d.Name == name {
+			return d
 		}
-		p.Questions = append(p.Questions, summaryOf(b, q))
-		p.Count++
 	}
-	sort.Strings(order)
-	pkgs := make([]pkgJSON, 0, len(order))
-	for _, n := range order {
-		p := byPkg[n]
-		sort.Slice(p.Questions, func(i, j int) bool { return p.Questions[i].ID < p.Questions[j].ID })
-		pkgs = append(pkgs, *p)
+	d := &treeNode{Name: name, Path: path, Dirs: []*treeNode{}, Questions: []questSummary{}}
+	node.Dirs = append(node.Dirs, d)
+	return d
+}
+
+func sortTree(n *treeNode) {
+	sort.Slice(n.Dirs, func(i, j int) bool { return n.Dirs[i].Name < n.Dirs[j].Name })
+	sort.Slice(n.Questions, func(i, j int) bool { return n.Questions[i].ID < n.Questions[j].ID })
+	for _, d := range n.Dirs {
+		sortTree(d)
 	}
-	return pkgs
 }
 
 // ---------- JSON API ----------

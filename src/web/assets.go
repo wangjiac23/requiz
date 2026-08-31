@@ -63,6 +63,9 @@ button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(-
 .pkg{font-size:13px}
 .pkg-head{display:flex;align-items:center;gap:4px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--text);font-weight:600}
 .pkg-head:hover{background:var(--hover)}
+.pkg-head.sel{background:var(--accent-bg);color:var(--accent)}
+.dir-exp{cursor:pointer;display:inline-block;width:14px;flex-shrink:0}
+.dir-name{cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pkg-head .cnt{color:var(--muted);font-weight:400;font-size:12px}
 .pkg-body{padding-left:18px}
 .q-item{padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -121,7 +124,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {} };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [] };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -183,6 +186,14 @@ function init(){
   qs("#displayBtn").onclick = openDisplay;
   qs("#displayOk").onclick = saveDisplay;
   qs("#displayCancel").onclick = closeDisplay;
+  // V1.7.0：点主区域空白取消目录选择
+  qs("#mainContent").addEventListener("click", function(e){
+    if ((e.target === this || e.target.classList.contains("empty")) && state.selDirs.length > 0) {
+      state.selDirs = [];
+      renderSidebar();
+      renderMain();
+    }
+  });
   document.querySelectorAll("#sideTabs .stab").forEach(function(b){
     b.onclick = function(){ switchSideTab(b.getAttribute("data-tab")); };
   });
@@ -474,53 +485,104 @@ function renderSidebar(){
   if (state.sideTab === "fav") { renderFavSidebar(sb); return; }
   if (state.sideTab === "lists") { renderListsSidebar(sb); return; }
   sb.innerHTML = "";
-  state.tree.forEach(function(pkg, i){
-    var head = document.createElement("div");
-    head.className = "pkg-head";
-    head.innerHTML = (state.expanded[pkg.name] ? "▾" : "▸") + " " + esc(pkg.name) + ' <span class="cnt">' + pkg.count + "</span>";
-    head.onclick = function(){
-      state.expanded[pkg.name] = !state.expanded[pkg.name];
-      renderSidebar();
-    };
-    sb.appendChild(head);
-    if (state.expanded[pkg.name]) {
-      var body = document.createElement("div");
-      body.className = "pkg-body";
-      pkg.questions.forEach(function(q){
-        var it = document.createElement("div");
-        it.className = "q-item";
-        it.textContent = q.id + " · " + (q.title ? q.title : q.file);
-        it.title = q.file;
-        it.onclick = function(){
-          selectQuestion(q);
-          document.querySelectorAll(".q-item").forEach(function(x){ x.classList.remove("active"); });
-          it.classList.add("active");
-        };
-        body.appendChild(it);
-      });
-      sb.appendChild(body);
-    }
-  });
-  if (state.tree.length === 0) {
+  if (!state.tree || !state.tree.root) { sb.innerHTML = '<div class="empty">题库为空</div>'; return; }
+  var root = state.tree.root;
+  // 根目录题目（直接放在题库根）
+  root.questions.forEach(function(q){ sb.appendChild(buildQItem(q)); });
+  // 递归渲染子目录
+  root.dirs.forEach(function(d){ sb.appendChild(renderDirNode(d, 0)); });
+  if (root.dirs.length === 0 && root.questions.length === 0) {
     sb.innerHTML = '<div class="empty">题库为空</div>';
   }
 }
 
+// 目录节点：名称点击=筛选（Ctrl 多选），箭头=展开/收起
+function renderDirNode(dir, depth){
+  var wrap = document.createElement("div");
+  var row = document.createElement("div");
+  row.className = "pkg-head" + (state.selDirs.indexOf(dir.path) >= 0 ? " sel" : "");
+  row.style.paddingLeft = (6 + depth * 14) + "px";
+  var exp = document.createElement("span");
+  exp.className = "dir-exp";
+  exp.textContent = state.expanded[dir.path] ? "▾" : "▸";
+  exp.onclick = function(e){
+    e.stopPropagation();
+    state.expanded[dir.path] = !state.expanded[dir.path];
+    renderSidebar();
+  };
+  var nm = document.createElement("span");
+  nm.className = "dir-name";
+  nm.textContent = "📁 " + dir.name;
+  var cnt = document.createElement("span");
+  cnt.className = "cnt";
+  cnt.textContent = (dir.questions.length + countSub(dir));
+  row.appendChild(exp); row.appendChild(nm); row.appendChild(cnt);
+  // 点击名称 → 筛选目录（Ctrl 多选）
+  row.onclick = function(e){
+    var idx = state.selDirs.indexOf(dir.path);
+    if (e.ctrlKey || e.metaKey) {
+      if (idx >= 0) state.selDirs.splice(idx, 1); else state.selDirs.push(dir.path);
+    } else {
+      state.selDirs = (idx >= 0 && state.selDirs.length === 1) ? [] : [dir.path];
+    }
+    renderSidebar();
+    renderMain();
+  };
+  wrap.appendChild(row);
+  if (state.expanded[dir.path]) {
+    dir.dirs.forEach(function(d){ wrap.appendChild(renderDirNode(d, depth + 1)); });
+    var body = document.createElement("div");
+    body.className = "pkg-body";
+    body.style.paddingLeft = (6 + (depth + 1) * 14) + "px";
+    dir.questions.forEach(function(q){ body.appendChild(buildQItem(q)); });
+    if (dir.questions.length) wrap.appendChild(body);
+  }
+  return wrap;
+}
+
+function countSub(dir){
+  var n = dir.questions.length;
+  dir.dirs.forEach(function(d){ n += countSub(d); });
+  return n;
+}
+
+// 题目叶节点
+function buildQItem(q){
+  var it = document.createElement("div");
+  it.className = "q-item";
+  it.textContent = q.id + " · " + (q.title ? q.title : q.file);
+  it.title = q.file;
+  it.onclick = function(){
+    selectQuestion(q);
+    document.querySelectorAll(".q-item").forEach(function(x){ x.classList.remove("active"); });
+    it.classList.add("active");
+  };
+  return it;
+}
+
 function aggregateTags(){
   var map = {};
-  state.tree.forEach(function(pkg){
-    pkg.questions.forEach(function(q){
-      var keys = ["chapter","grade","difficulty","importance","source","knowledge","type"];
-      keys.forEach(function(k){
-        var v = q.meta[k];
-        if (v) {
-          if (!map[k]) map[k] = {};
-          map[k][v] = true;
-        }
-      });
+  walkTree(function(q){
+    var keys = ["chapter","grade","difficulty","importance","source","knowledge","type"];
+    keys.forEach(function(k){
+      var v = q.meta[k];
+      if (v) {
+        if (!map[k]) map[k] = {};
+        map[k][v] = true;
+      }
     });
   });
   return map;
+}
+
+// 递归遍历树中所有题目
+function walkTree(fn){
+  if (!state.tree || !state.tree.root) return;
+  var walk = function(n){
+    n.questions.forEach(fn);
+    n.dirs.forEach(walk);
+  };
+  walk(state.tree.root);
 }
 
 function renderFilters(){
@@ -560,17 +622,32 @@ function renderFilters(){
 
 function visibleQuestions(){
   var out = [];
-  state.tree.forEach(function(pkg){
-    pkg.questions.forEach(function(q){
-      if (state.favOnly && !isFav(q)) return;
-      var hit = true;
-      for (var k in state.filters) {
-        if (q.meta[k] !== state.filters[k]) { hit = false; break; }
-      }
-      if (hit) out.push({ pkg: pkg.name, q: q });
-    });
+  walkTree(function(q){
+    if (state.favOnly && !isFav(q)) return;
+    if (state.selDirs.length > 0 && !inSelDirs(q)) return;
+    var hit = true;
+    for (var k in state.filters) {
+      if (q.meta[k] !== state.filters[k]) { hit = false; break; }
+    }
+    if (hit) out.push({ pkg: dirOf(q), q: q });
   });
   return out;
+}
+
+// V1.7.0：目录筛选（selDirs 多选，含子目录）
+function dirOf(q){
+  var rel = q.rel || "";
+  var idx = rel.lastIndexOf("/");
+  return idx >= 0 ? rel.slice(0, idx) : "";
+}
+function inSelDirs(q){
+  var d = dirOf(q);
+  if (d === "") return false; // 根目录题目不在任何选中文件夹
+  for (var i = 0; i < state.selDirs.length; i++) {
+    var s = state.selDirs[i];
+    if (d === s || d.indexOf(s + "/") === 0) return true;
+  }
+  return false;
 }
 
 // ---------- V1.4.0：显示清单（自定义显示字段） ----------
