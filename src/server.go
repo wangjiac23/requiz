@@ -147,6 +147,8 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/open", apiOpenHandler(store))
 	mux.HandleFunc("/api/question/save", apiQuestionSaveHandler(store))
 	mux.HandleFunc("/api/reload", apiReloadHandler(store))
+	mux.HandleFunc("/api/meta-values", apiMetaValuesHandler(store))
+	mux.HandleFunc("/api/meta-value/add", apiMetaValueAddHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -368,6 +370,107 @@ func apiReloadHandler(s *Store) http.HandlerFunc {
 		writeJSON(w, map[string]any{"ok": true, "count": len(nb.Questions)})
 	}
 }
+
+// ---------- V1.2.3：元数据字段值配置（.requiz/meta-values.yaml） ----------
+
+type metaValues map[string][]string
+
+func metaValuesPath(b *Bank) string {
+	return filepath.Join(b.Dir, ".requiz", "meta-values.yaml")
+}
+
+func readMetaValues(b *Bank) metaValues {
+	mv := metaValues{}
+	data, err := os.ReadFile(metaValuesPath(b))
+	if err != nil {
+		return mv
+	}
+	cur := ""
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if strings.HasPrefix(l, "- ") {
+			if cur != "" {
+				mv[cur] = append(mv[cur], strings.TrimSpace(l[2:]))
+			}
+			continue
+		}
+		if idx := strings.Index(l, ":"); idx > 0 {
+			cur = strings.TrimSpace(l[:idx])
+			mv[cur] = []string{}
+		}
+	}
+	return mv
+}
+
+func writeMetaValues(b *Bank, mv metaValues) error {
+	keys := []string{}
+	for k := range mv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "%s:\n", k)
+		for _, v := range mv[k] {
+			fmt.Fprintf(&sb, "  - %s\n", v)
+		}
+	}
+	return os.WriteFile(metaValuesPath(b), []byte(sb.String()), 0644)
+}
+
+// GET /api/meta-values?bank= ：返回题库的字段已知值 {field: [values]}
+func apiMetaValuesHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := s.bankByDir(r.URL.Query().Get("bank"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, readMetaValues(b))
+	}
+}
+
+// POST /api/meta-value/add {bank, field, value}：新值写入题库配置（去重）
+func apiMetaValueAddHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank  string `json:"bank"`
+			Field string `json:"field"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.Field == "" || body.Value == "" {
+			http.Error(w, `{"error":"需要 field 与 value 字段"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		mv := readMetaValues(b)
+		for _, v := range mv[body.Field] {
+			if v == body.Value {
+				writeJSON(w, map[string]bool{"ok": true})
+				return
+			}
+		}
+		mv[body.Field] = append(mv[body.Field], body.Value)
+		if err := writeMetaValues(b, mv); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// ---------- 题目视图模型 ----------
 
 type questSummary struct {
 	ID    string            `json:"id"`
@@ -676,7 +779,7 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <h3>编辑题目 <span id="editId" class="meta"></span></h3>
     <label class="lbl">题目名（文件名）</label>
     <input id="editFile" type="text">
-    <label class="lbl">元数据（留空则删除该字段）</label>
+    <label class="lbl">元数据（留空则删除该字段）<button id="editAddField" style="margin-left:8px;padding:2px 8px">＋ 添加字段</button></label>
     <div id="editMeta"></div>
     <label class="lbl">题干</label>
     <textarea id="editPrompt" rows="5"></textarea>
@@ -804,8 +907,10 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #editModal textarea{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px;resize:vertical}
 #editModal .lbl{font-size:12px;color:var(--muted)}
 #editModal input[type=text]{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px}
-#editMeta{display:grid;grid-template-columns:1fr 2fr;gap:4px 8px;margin-bottom:8px}
-#editMeta input{width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px}
+#editMeta{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.meta-row{display:grid;grid-template-columns:80px 1fr;gap:6px;align-items:center}
+.meta-row .cust{grid-column:2;display:flex;gap:4px}
+.meta-row .cust input{flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px}
 .q-actions{display:flex;gap:8px;margin-bottom:10px}
 .q-actions button{font-size:12px;padding:4px 10px}
 #reloadBtn{padding:6px 10px}
@@ -864,6 +969,7 @@ function init(){
   qs("#reloadBtn").onclick = reloadBank;
   qs("#editSave").onclick = saveEdit;
   qs("#editCancel").onclick = closeEdit;
+  qs("#editAddField").onclick = addField;
   loadBanks();
 }
 
@@ -1138,44 +1244,109 @@ function openEdit(d, q){
   editing = q;
   qs("#editId").textContent = q.id;
   qs("#editFile").value = q.file;
-  // 元数据输入框（常用键优先，其余自定义键追加；app/bank/path 系统字段不展示）
-  var metaBox = qs("#editMeta");
-  metaBox.innerHTML = "";
-  var keys = ["id","chapter","grade","difficulty","importance","source","knowledge","type"];
-  var shown = {};
-  keys.forEach(function(k){ if (d.meta && d.meta[k]) { addMetaRow(metaBox, k, d.meta[k]); shown[k] = true; } });
-  keys.forEach(function(k){ if (!shown[k]) addMetaRow(metaBox, k, ""); });
-  Object.keys(d.meta || {}).forEach(function(k){
-    if (keys.indexOf(k) < 0 && ["app","bank","path"].indexOf(k) < 0) addMetaRow(metaBox, k, d.meta[k]);
-  });
   qs("#editPrompt").value = d.prompt || "";
   qs("#editAnswer").value = d.answer || "";
   qs("#editExplain").value = d.explain || "";
   qs("#editNote").value = d.note || "";
   qs("#editMsg").textContent = "";
+  // 异步加载字段已知值后构建元数据行
+  fetch("/api/meta-values?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(values){
+    buildMetaRows(d.meta || {}, values);
+  });
   qs("#editModal").classList.add("show");
 }
-function addMetaRow(box, k, v){
+function buildMetaRows(meta, values){
+  var metaBox = qs("#editMeta");
+  metaBox.innerHTML = "";
+  var keys = ["id","chapter","grade","difficulty","importance","source","knowledge","type"];
+  var shown = {};
+  keys.forEach(function(k){ if (meta[k]) { addMetaRow(metaBox, k, meta[k], (values||{})[k] || []); shown[k] = true; } });
+  keys.forEach(function(k){ if (!shown[k]) addMetaRow(metaBox, k, "", (values||{})[k] || []); });
+  Object.keys(meta).forEach(function(k){
+    if (keys.indexOf(k) < 0 && ["app","bank","path"].indexOf(k) < 0) addMetaRow(metaBox, k, meta[k], (values||{})[k] || []);
+  });
+}
+function addMetaRow(box, k, v, knownVals){
   var row = document.createElement("div");
-  row.style.display = "contents";
+  row.className = "meta-row";
   var lab = document.createElement("span");
   lab.className = "lbl";
   lab.textContent = tagName(k);
   lab.style.paddingTop = "5px";
+  var sel = document.createElement("select");
+  sel.setAttribute("data-key", k);
+  var opt = document.createElement("option"); opt.value = ""; opt.text = "（空）";
+  sel.appendChild(opt);
+  (knownVals || []).forEach(function(vv){
+    var o = document.createElement("option"); o.value = vv; o.text = vv;
+    if (vv === v) o.selected = true;
+    sel.appendChild(o);
+  });
+  var cust = document.createElement("option"); cust.value = "__custom__"; cust.text = "✍️ 自定义/新增值…";
+  sel.appendChild(cust);
+  if (v && (knownVals||[]).indexOf(v) < 0) cust.selected = true;
+  var cdiv = document.createElement("span");
+  cdiv.className = "cust";
+  cdiv.style.display = cust.selected ? "flex" : "none";
   var inp = document.createElement("input");
-  inp.setAttribute("data-key", k);
-  inp.value = v || "";
-  row.appendChild(lab);
-  row.appendChild(inp);
+  inp.value = cust.selected ? v : "";
+  var btnAdd = document.createElement("button"); btnAdd.textContent = "📥 加入配置"; btnAdd.title = "保存至题库配置，以后所有题目可选";
+  var btnOnce = document.createElement("button"); btnOnce.textContent = "✍️ 仅本次"; btnOnce.title = "只用于这道题";
+  cdiv.appendChild(inp); cdiv.appendChild(btnAdd); cdiv.appendChild(btnOnce);
+  sel.onchange = function(){
+    cdiv.style.display = (this.value === "__custom__") ? "flex" : "none";
+    if (this.value !== "__custom__") inp.value = "";
+  };
+  btnAdd.onclick = function(){
+    var nv = inp.value.trim();
+    if (!nv) return;
+    fetch("/api/meta-value/add", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({bank: state.bank, field: k, value: nv})
+    }).then(function(r){ return r.json(); }).then(function(dd){
+      if (dd.ok) {
+        var o = document.createElement("option"); o.value = nv; o.text = nv; o.selected = true;
+        sel.insertBefore(o, cust);
+        sel.value = nv;
+        cdiv.style.display = "none";
+        qs("#editMsg").textContent = "✅ 已加入题库配置";
+      } else {
+        qs("#editMsg").textContent = "❌ " + (dd.error || "添加失败");
+      }
+    });
+  };
+  btnOnce.onclick = function(){
+    sel.value = "__custom__";
+    cdiv.style.display = "flex";
+    qs("#editMsg").textContent = "✍️ 该值仅用于本题";
+  };
+  row.appendChild(lab); row.appendChild(sel); row.appendChild(cdiv);
   box.appendChild(row);
+}
+function addField(){
+  var name = prompt("输入新字段名（如：出处、备注人）");
+  if (!name || !name.trim()) return;
+  name = name.trim();
+  var exist = false;
+  qs("#editMeta").querySelectorAll("select[data-key]").forEach(function(s){ if (s.getAttribute("data-key") === name) exist = true; });
+  if (exist) { alert("字段已存在"); return; }
+  addMetaRow(qs("#editMeta"), name, "", []);
 }
 function closeEdit(){ qs("#editModal").classList.remove("show"); }
 function saveEdit(){
   if (!editing) return;
   var meta = {};
-  qs("#editMeta").querySelectorAll("input").forEach(function(inp){
-    var k = inp.getAttribute("data-key");
-    if (inp.value.trim() !== "") meta[k] = inp.value.trim();
+  qs("#editMeta").querySelectorAll("select[data-key]").forEach(function(sel){
+    var k = sel.getAttribute("data-key");
+    var val = "";
+    if (sel.value === "__custom__") {
+      var inp = sel.parentElement.querySelector("input");
+      val = inp ? inp.value.trim() : "";
+    } else {
+      val = sel.value;
+    }
+    if (val !== "") meta[k] = val;
   });
   var body = {
     bank: state.bank, id: editing.id,
