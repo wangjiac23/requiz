@@ -104,6 +104,19 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 .q-actions{display:flex;gap:8px;margin-bottom:10px}
 .q-actions button{font-size:12px;padding:4px 10px}
 #reloadBtn{padding:6px 10px}
+.test-btn{padding:2px 8px;font-size:11px;margin-left:4px;background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.test-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-bottom:12px}
+.test-bar .cnt{color:var(--muted)}
+.test-bar button{margin-left:auto}
+.test-q .qbox-head{border-bottom:1px dashed var(--border);padding-bottom:6px}
+.test-answer{margin-top:8px;padding-top:6px;border-top:1px dashed var(--border)}
+.test-answer b{font-size:13px;color:var(--muted)}
+.opt-group{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.opt{display:flex;align-items:center;gap:6px;font-size:14px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;cursor:pointer}
+.opt:hover{background:var(--hover)}
+.ans-input{width:100%;max-width:400px;padding:8px;margin-top:6px;border:1px solid var(--border);border-radius:6px;font-size:14px}
+.ans-textarea{width:100%;padding:8px;margin-top:6px;border:1px solid var(--border);border-radius:6px;font-size:14px;resize:vertical;font-family:inherit}
+.test-done{margin:16px auto;display:block;padding:10px 30px;font-size:14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer}
 .modal-box{background:var(--panel);border-radius:10px;padding:20px;width:420px;max-width:90%}
 #modal .modal-box h4{margin:10px 0 6px;font-size:13px;color:var(--text)}
 .cfg-tabs{display:flex;gap:6px;margin-bottom:10px}
@@ -124,7 +137,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [] };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {}, sideTab: "tree", selectMode: false, selected: {}, selDirs: [], testing: null };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -323,6 +336,7 @@ function setMode(m){
 }
 
 function renderMain(){
+  if (state.testing) { renderTest(); return; }
   if (state.mode === "split") renderSplit();
   else if (state.mode === "card") renderCard();
   else renderList();
@@ -378,19 +392,40 @@ function renderFavSidebar(sb){
 function renderListsSidebar(sb){
   fetch("/api/lists?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(lists){
     sb.innerHTML = "";
-    if (lists.length === 0) { sb.innerHTML = '<div class="empty">暂无清单（选择题目后「📋 存清单」）</div>'; return; }
+    if (lists.length === 0) { sb.innerHTML = '<div class="empty">暂无题组（选择题目后「📋 存题组」）</div>'; return; }
     lists.forEach(function(l){
       var head = document.createElement("div");
       head.className = "pkg-head";
-      head.innerHTML = "▸ " + esc(l.name) + ' <span class="cnt">' + l.count + "</span>";
-      head.onclick = function(){
+      var exp = document.createElement("span");
+      exp.className = "dir-exp";
+      exp.textContent = "▸";
+      exp.onclick = function(e){
+        e.stopPropagation();
         var body = head.nextElementSibling;
         if (body) {
           var open = body.style.display !== "none";
           body.style.display = open ? "none" : "block";
-          head.textContent = (open ? "▸ " : "▾ ") + l.name + " (" + l.count + ")";
+          exp.textContent = open ? "▸" : "▾";
         }
       };
+      var nm = document.createElement("span");
+      nm.className = "dir-name";
+      nm.textContent = "📁 " + l.name;
+      nm.onclick = function(e){
+        e.stopPropagation();
+        exp.click();
+      };
+      var cnt = document.createElement("span");
+      cnt.className = "cnt";
+      cnt.textContent = l.count;
+      var testBtn = document.createElement("button");
+      testBtn.className = "test-btn";
+      testBtn.textContent = "▶ 测试";
+      testBtn.onclick = function(e){
+        e.stopPropagation();
+        startTest(l);
+      };
+      head.appendChild(exp); head.appendChild(nm); head.appendChild(cnt); head.appendChild(testBtn);
       sb.appendChild(head);
       var body = document.createElement("div");
       body.className = "pkg-body";
@@ -404,6 +439,105 @@ function renderListsSidebar(sb){
       });
       sb.appendChild(body);
     });
+  });
+}
+
+// ---------- V1.7.0：在线测试模式（批次 B：答题基础） ----------
+
+// 开始测试（题组 → 测试模式）
+function startTest(list){
+  state.testing = {name: list.name, qs: (list.questions || []), answers: {}};
+  state.sideTab = "tree";
+  renderTest();
+}
+
+// 渲染测试（主区域只显示题目 + 答题区）
+function renderTest(){
+  var main = qs("#mainContent");
+  main.innerHTML = "";
+  var t = state.testing;
+  if (!t) return;
+  var bar = document.createElement("div");
+  bar.className = "test-bar";
+  bar.innerHTML = "<b>🧪 测试：" + esc(t.name) + "</b> <span class='cnt'>" + t.qs.length + " 题</span>";
+  var exitBtn = document.createElement("button");
+  exitBtn.textContent = "✕ 退出";
+  exitBtn.onclick = function(){ state.testing = null; renderMain(); };
+  bar.appendChild(exitBtn);
+  main.appendChild(bar);
+  if (t.qs.length === 0) { main.innerHTML += '<div class="empty">题组为空</div>'; return; }
+  t.qs.forEach(function(q, i){
+    var card = document.createElement("div");
+    card.className = "qbox test-q";
+    card.setAttribute("data-id", q.id);
+    card.innerHTML =
+      '<div class="qbox-head"><span class="qbox-id">' + (i + 1) + ". " + esc(q.id) + '</span>' +
+      '<span class="qbox-tags">' + metaTagsOf(q.meta) + '</span></div>' +
+      '<div class="qbox-prompt content">' + esc(q.prompt || q.title) + '</div>' +
+      answerArea(q);
+    main.appendChild(card);
+    renderMath(card);
+  });
+  // 完成按钮（批次 B 先提交答案预览，批次 C 评分）
+  var done = document.createElement("button");
+  done.className = "test-done";
+  done.textContent = "✅ 完成测试";
+  done.onclick = function(){
+    collectAnswers();
+    alert("已收集 " + Object.keys(state.testing.answers).length + " 题答案（评分功能开发中）");
+  };
+  main.appendChild(done);
+}
+
+// 答题区（按题型）
+function answerArea(q){
+  var type = (q.meta && q.meta.type) || "";
+  var html = '<div class="test-answer"><b>作答</b> ';
+  if (type === "选择题") {
+    var opts = extractOptions(q.prompt || "");
+    if (opts.length > 0) {
+      html += '<div class="opt-group">';
+      opts.forEach(function(o){
+        html += '<label class="opt"><input type="radio" name="ta' + q.id + '" value="' + esc(o.key) + '"> ' + esc(o.key) + ". " + esc(o.text) + "</label>";
+      });
+      html += "</div>";
+    } else {
+      html += '<input class="ans-input" data-id="' + esc(q.id) + '" placeholder="输入选项字母（如 A）">';
+    }
+  } else if (type === "填空题") {
+    html += '<input class="ans-input" data-id="' + esc(q.id) + '" placeholder="填写答案">';
+  } else {
+    html += '<textarea class="ans-textarea" data-id="' + esc(q.id) + '" rows="4" placeholder="作答"></textarea>';
+  }
+  html += "</div>";
+  return html;
+}
+
+// 从题干提取选项（A. xxx / B. xxx）
+function extractOptions(prompt){
+  var opts = [];
+  var lines = prompt.split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^\s*([A-Z])\.\s*(.+)$/);
+    if (m && m[1].charCodeAt(0) - 65 === opts.length) {
+      opts.push({key: m[1], text: m[2].trim()});
+    }
+  }
+  return opts;
+}
+
+// 收集答案
+function collectAnswers(){
+  if (!state.testing) return;
+  state.testing.answers = {};
+  document.querySelectorAll("#mainContent .test-q").forEach(function(card){
+    var id = card.getAttribute("data-id");
+    var checked = card.querySelector("input[type=radio]:checked");
+    if (checked) { state.testing.answers[id] = checked.value; return; }
+    var inp = card.querySelector(".ans-input");
+    if (inp && inp.value.trim()) { state.testing.answers[id] = inp.value.trim(); return; }
+    var ta = card.querySelector(".ans-textarea");
+    if (ta && ta.value.trim()) { state.testing.answers[id] = ta.value.trim(); }
   });
 }
 
@@ -428,14 +562,14 @@ function toggleSelect(q){
 function saveSelectedAsList(){
   var ids = Object.keys(state.selected);
   if (ids.length === 0) { alert("请先勾选题目"); return; }
-  var name = prompt("清单名称（如：期中复习卷）");
+  var name = prompt("题组名称（如：期中复习卷）");
   if (!name || !name.trim()) return;
   fetch("/api/lists/save", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({bank: state.bank, name: name.trim(), ids: ids})
   }).then(function(r){ return r.json(); }).then(function(d){
-    if (d.ok) { alert("✅ 已保存清单「" + name.trim() + "」（" + ids.length + " 题）"); }
+    if (d.ok) { alert("✅ 已保存题组「" + name.trim() + "」（" + ids.length + " 题）"); }
   });
 }
 
