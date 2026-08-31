@@ -21,6 +21,7 @@ type GlobalConfig struct {
 	Defaults   map[string]string
 	MetaFields []FieldDef
 	Links      []string
+	Favorites  []string // 收藏（"题库目录|题目ID"）
 }
 
 // ProjectConfig 项目（题库）配置（bank/app + 该题库自定义字段）
@@ -107,6 +108,8 @@ func parseGlobalConfig(data string) GlobalConfig {
 			}
 		case indent == 2 && section == "links" && strings.HasPrefix(trim, "-"):
 			g.Links = append(g.Links, strings.TrimSpace(trim[1:]))
+		case indent == 2 && section == "favorites" && strings.HasPrefix(trim, "-"):
+			g.Favorites = append(g.Favorites, strings.TrimSpace(trim[1:]))
 		case indent == 2 && section == "defaults":
 			if idx := strings.Index(trim, ":"); idx > 0 {
 				g.Defaults[strings.TrimSpace(trim[:idx])] = strings.TrimSpace(trim[idx+1:])
@@ -173,6 +176,12 @@ func (g GlobalConfig) serialize() string {
 		b.WriteString("\nlinks:\n")
 		for _, l := range g.Links {
 			fmt.Fprintf(&b, "  - %s\n", l)
+		}
+	}
+	if len(g.Favorites) > 0 {
+		b.WriteString("\nfavorites:\n")
+		for _, f := range g.Favorites {
+			fmt.Fprintf(&b, "  - %s\n", f)
 		}
 	}
 	return b.String()

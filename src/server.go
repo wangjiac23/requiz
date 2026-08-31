@@ -163,6 +163,8 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/config/global", apiConfigGlobalHandler(store))
 	mux.HandleFunc("/api/config/global/save", apiConfigGlobalSaveHandler(store))
 	mux.HandleFunc("/api/config/project", apiConfigProjectHandler(store))
+	mux.HandleFunc("/api/favorite", apiFavoriteHandler(store))
+	mux.HandleFunc("/api/favorites", apiFavoritesHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -486,10 +488,11 @@ func apiConfigGlobalHandler(s *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		gc := s.global
 		writeJSON(w, map[string]any{
-			"path":       globalConfigPath(),
-			"defaults":   gc.Defaults,
+			"path":        globalConfigPath(),
+			"defaults":    gc.Defaults,
 			"meta_fields": gc.MetaFields,
-			"links":      gc.Links,
+			"links":       gc.Links,
+			"favorites":   gc.Favorites,
 		})
 	}
 }
@@ -548,6 +551,88 @@ func apiConfigProjectHandler(s *Store) http.HandlerFunc {
 			"bank":        pc.Bank,
 			"meta_fields": pc.MetaFields,
 		})
+	}
+}
+
+// ---------- V1.4.0：收藏 API ----------
+
+// POST /api/favorite {bank, id}：收藏/取消（toggle，存全局配置）
+func apiFavoriteHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank string `json:"bank"`
+			ID   string `json:"id"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.ID == "" {
+			http.Error(w, `{"error":"需要 bank 与 id 字段"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		q, err := b.find(body.ID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		key := b.Dir + "|" + q.ID()
+		gc := s.global
+		idx := -1
+		for i, f := range gc.Favorites {
+			if f == key {
+				idx = i
+				break
+			}
+		}
+		favorited := idx < 0
+		if idx >= 0 {
+			gc.Favorites = append(gc.Favorites[:idx], gc.Favorites[idx+1:]...)
+		} else {
+			gc.Favorites = append(gc.Favorites, key)
+		}
+		if err := writeGlobalConfig(gc); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		s.mu.Lock()
+		s.global = gc
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{"ok": true, "favorited": favorited})
+	}
+}
+
+// GET /api/favorites：收藏列表（含题目信息）
+func apiFavoritesHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		out := []map[string]any{}
+		for _, f := range s.global.Favorites {
+			parts := strings.SplitN(f, "|", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			b, err := s.bankByDir(parts[0])
+			if err != nil {
+				continue
+			}
+			q, err := b.find(parts[1])
+			if err != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"bank":  b.Name,
+				"dir":   b.Dir,
+				"id":    q.ID(),
+				"file":  q.File,
+				"title": firstLine(q.Prompt),
+			})
+		}
+		writeJSON(w, out)
 	}
 }
 
@@ -841,7 +926,17 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     </div>
     <div id="resizer" title="拖拽调整宽度（拖到最窄隐藏）"></div>
   </div>
-  <main id="main"><div class="empty">加载中…</div></main>
+  <main id="main">
+    <div id="mainToolbar">
+      <button class="mode active" data-mode="list" title="列表浏览">📋 列表</button>
+      <button class="mode" data-mode="split" title="双栏浏览">📑 双栏</button>
+      <button class="mode" data-mode="card" title="卡片浏览">🃏 卡片</button>
+      <span style="flex:1"></span>
+      <button id="displayBtn" title="自定义显示字段">⚙ 字段</button>
+      <button id="favFilterBtn" title="只看收藏的题目">☆ 收藏</button>
+    </div>
+    <div id="mainContent"><div class="empty">加载中…</div></div>
+  </main>
 </div>
 <div id="modal" hidden>
   <div class="modal-box" style="width:600px;max-height:85vh;overflow-y:auto">
@@ -872,6 +967,17 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <div id="linkMsg" class="tip"></div>
     <div class="modal-actions">
       <button id="linkCancel">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="displayModal">
+  <div class="modal-box" style="width:360px">
+    <h3>显示字段清单 <small style="color:var(--muted);font-weight:400">勾选要在题目上显示的字段</small></h3>
+    <div id="displayList"></div>
+    <div id="displayMsg" class="tip"></div>
+    <div class="modal-actions">
+      <button id="displayOk">保存</button>
+      <button id="displayCancel">取消</button>
     </div>
   </div>
 </div>
@@ -984,7 +1090,28 @@ button:hover{background:var(--hover)}
 #resizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent}
 #resizer:hover,#resizer.active{background:var(--accent-bg)}
 button.pinned{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
-#main{flex:1;overflow-y:auto;padding:16px}
+#main{flex:1;overflow-y:auto;padding:0}
+#mainToolbar{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+#mainToolbar .mode{padding:4px 10px;font-size:12px}
+#mainToolbar .mode.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+#mainContent{padding:16px}
+.qbox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:12px}
+.qbox.active{border-color:var(--accent)}
+.qbox-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.qbox-id{font-weight:600;font-size:14px}
+.qbox-tags{flex:1;display:flex;gap:4px;flex-wrap:wrap}
+.qbox-actions{display:flex;gap:4px}
+.fav-btn{border:none;background:none;font-size:16px;cursor:pointer;padding:2px}
+.exp-btn{padding:3px 10px;font-size:12px}
+.qbox-detail{margin-top:8px;border-top:1px dashed var(--border);padding-top:6px}
+.sec-btn{display:block;width:100%;text-align:left;padding:6px 10px;margin:4px 0;background:var(--sidebar);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
+.sec-body{padding:8px 10px}
+.split-wrap{display:flex;gap:14px;height:calc(100vh - 140px)}
+.split-left{width:42%;min-width:280px;overflow-y:auto;padding-right:6px}
+.split-right{flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:14px 18px;background:var(--panel)}
+.card-nav{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px}
+.card-nav span{color:var(--muted);font-size:13px}
+.split-right .qbox{margin-bottom:12px}
 .pkg{font-size:13px}
 .pkg-head{display:flex;align-items:center;gap:4px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--text);font-weight:600}
 .pkg-head:hover{background:var(--hover)}
@@ -1005,6 +1132,10 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 #modal.show{display:flex}
 #editModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #editModal.show{display:flex}
+#displayModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#displayModal.show{display:flex}
+#displayList{display:flex;flex-direction:column;gap:4px;margin:10px 0}
+#displayList label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 #editModal .modal-box{width:560px;max-width:92%;max-height:85vh;overflow-y:auto}
 #editModal textarea{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px;resize:vertical}
 #editModal .lbl{font-size:12px;color:var(--muted)}
@@ -1039,7 +1170,7 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 `
 
 const indexJS = `
-var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {} };
+var state = { banks: [], bank: "", tree: [], filters: {}, expanded: {}, mode: "list", favOnly: false, cardIdx: 0, favs: {} };
 
 function qs(s){ return document.querySelector(s); }
 function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":s); return d.innerHTML; }
@@ -1087,6 +1218,18 @@ function init(){
   qs("#editSave").onclick = saveEdit;
   qs("#editCancel").onclick = closeEdit;
   qs("#editAddField").onclick = addField;
+  qs("#favFilterBtn").onclick = function(){
+    state.favOnly = !state.favOnly;
+    this.textContent = state.favOnly ? "★ 收藏（仅看）" : "☆ 收藏";
+    this.classList.toggle("active", state.favOnly);
+    loadAll();
+  };
+  qs("#displayBtn").onclick = openDisplay;
+  qs("#displayOk").onclick = saveDisplay;
+  qs("#displayCancel").onclick = closeDisplay;
+  document.querySelectorAll("#mainToolbar .mode").forEach(function(b){
+    b.onclick = function(){ setMode(b.getAttribute("data-mode")); };
+  });
   qs("#metaFoldBtn").onclick = function(){
     var folded = qs("#editMeta").classList.toggle("folded");
     this.textContent = folded ? "▸ 元数据" : "▾ 元数据";
@@ -1182,7 +1325,47 @@ function loadAll(){
     state.tree = tree;
     renderSidebar();
     renderFilters();
-    renderList();
+    // 加载收藏状态
+    fetch("/api/favorites").then(function(r){ return r.json(); }).then(function(favs){
+      state.favs = {};
+      favs.forEach(function(f){ state.favs[f.dir + "|" + f.id] = true; });
+      renderMain();
+    });
+  });
+}
+
+// 模式切换
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll("#mainToolbar .mode").forEach(function(b){
+    b.classList.toggle("active", b.getAttribute("data-mode") === m);
+  });
+  if (m === "card" && state.cardIdx >= visibleQuestions().length) state.cardIdx = 0;
+  renderMain();
+}
+
+function renderMain(){
+  if (state.mode === "split") renderSplit();
+  else if (state.mode === "card") renderCard();
+  else renderList();
+}
+
+function isFav(q){
+  return !!(state.favs[state.bank + "|" + q.id]);
+}
+
+function toggleFav(q, btn){
+  fetch("/api/favorite", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bank: state.bank, id: q.id})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      if (d.favorited) state.favs[state.bank + "|" + q.id] = true;
+      else delete state.favs[state.bank + "|" + q.id];
+      if (btn) btn.textContent = d.favorited ? "⭐" : "☆";
+      if (state.favOnly) renderMain();
+    }
   });
 }
 
@@ -1207,7 +1390,7 @@ function renderSidebar(){
         it.textContent = q.id + " · " + (q.title ? q.title : q.file);
         it.title = q.file;
         it.onclick = function(){
-          renderList(q);
+          selectQuestion(q);
           document.querySelectorAll(".q-item").forEach(function(x){ x.classList.remove("active"); });
           it.classList.add("active");
         };
@@ -1260,7 +1443,7 @@ function renderFilters(){
     sel.onchange = function(){
       var v = this.value;
       if (v) state.filters[k] = v; else delete state.filters[k];
-      renderList();
+      renderMain();
     };
     bar.appendChild(f);
   });
@@ -1268,7 +1451,7 @@ function renderFilters(){
     var btn = document.createElement("button");
     btn.className = "clear";
     btn.textContent = "清空筛选";
-    btn.onclick = function(){ state.filters = {}; renderFilters(); renderList(); };
+    btn.onclick = function(){ state.filters = {}; renderFilters(); renderMain(); };
     bar.appendChild(btn);
   }
 }
@@ -1277,6 +1460,7 @@ function visibleQuestions(){
   var out = [];
   state.tree.forEach(function(pkg){
     pkg.questions.forEach(function(q){
+      if (state.favOnly && !isFav(q)) return;
       var hit = true;
       for (var k in state.filters) {
         if (q.meta[k] !== state.filters[k]) { hit = false; break; }
@@ -1287,33 +1471,243 @@ function visibleQuestions(){
   return out;
 }
 
-function renderList(only){
-  var main = qs("#main");
+// ---------- V1.4.0：显示清单（自定义显示字段） ----------
+
+function defaultDisplay(){ return ["type","difficulty","importance","source"]; }
+function loadDisplay(){
+  try {
+    var d = JSON.parse(localStorage.getItem("reqDisplay"));
+    if (d && d.length) return d;
+  } catch(e){}
+  return defaultDisplay();
+}
+
+// 打开显示清单面板（字段来自全局配置 meta_fields + 常见扩展）
+function openDisplay(){
+  fetch("/api/config/global").then(function(r){ return r.json(); }).then(function(g){
+    var fields = (g.meta_fields || []).map(function(f){ return f.name; });
+    ["chapter","grade","knowledge"].forEach(function(k){ if (fields.indexOf(k) < 0) fields.push(k); });
+    var cur = loadDisplay();
+    var box = qs("#displayList");
+    box.innerHTML = "";
+    fields.forEach(function(f){
+      var lab = document.createElement("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = f;
+      cb.checked = cur.indexOf(f) >= 0;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(tagName(f)));
+      box.appendChild(lab);
+    });
+    qs("#displayModal").classList.add("show");
+  });
+}
+function closeDisplay(){ qs("#displayModal").classList.remove("show"); }
+function saveDisplay(){
+  var sel = [];
+  qs("#displayList").querySelectorAll("input:checked").forEach(function(cb){ sel.push(cb.value); });
+  localStorage.setItem("reqDisplay", JSON.stringify(sel));
+  closeDisplay();
+  renderMain();
+}
+
+function metaTagsOf(meta){
+  var html = "";
+  loadDisplay().forEach(function(k){
+    var v = meta[k];
+    if (v) html += '<span class="tag">' + esc(tagName(k)) + ": " + esc(v) + "</span>";
+  });
+  return html;
+}
+
+// ---------- V1.4.0：题目盒子 / 双栏 / 卡片 ----------
+
+// 题目盒子：默认只显示题干 + 展开按钮；答案/解析/备注分段折叠
+function buildBox(it, opts){
+  opts = opts || {};
+  var q = it.q;
+  var box = document.createElement("div");
+  box.className = "qbox" + (opts.active ? " active" : "");
+  box.setAttribute("data-id", q.id);
+  var meta = metaTagsOf(q.meta);
+  box.innerHTML =
+    '<div class="qbox-head"><span class="qbox-id">' + esc(q.id) + '</span>' +
+    '<span class="qbox-tags">' + meta + '</span>' +
+    '<span class="qbox-actions"><button class="fav-btn" title="收藏">' + (isFav(q) ? "⭐" : "☆") + '</button>' +
+    '<button class="exp-btn">▼ 展开</button></span></div>' +
+    '<div class="qbox-prompt content">' + esc(q.title) + '</div>' +
+    '<div class="qbox-detail" hidden></div>';
+  box.querySelector(".fav-btn").onclick = function(e){
+    e.stopPropagation();
+    toggleFav(q, this);
+  };
+  box.querySelector(".exp-btn").onclick = function(e){
+    e.stopPropagation();
+    toggleExpand(box, q);
+  };
+  if (opts.onclick) box.onclick = function(){ opts.onclick(box, q); };
+  renderMath(box);
+  return box;
+}
+
+// 展开/收起题目详情（答案/解析/备注分段，各自点击显示）
+function toggleExpand(box, q){
+  var det = box.querySelector(".qbox-detail");
+  var btn = box.querySelector(".exp-btn");
+  if (det.hidden) {
+    det.hidden = false;
+    btn.textContent = "▲ 收起";
+    if (det.getAttribute("data-loaded") !== "1") {
+      det.innerHTML = '<span class="tip">加载中…</span>';
+      fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
+        var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button></div>';
+        var secs = [["答案", d.answer], ["解析", d.explain], ["备注", d.note]];
+        secs.forEach(function(s){
+          if (s[1]) html += '<div class="sec"><button class="sec-btn">' + esc(s[0]) + ' ▸</button><div class="sec-body" hidden><div class="content">' + esc(s[1]) + "</div></div></div>";
+        });
+        if (!html) html = '<span class="tip">（无更多内容）</span>';
+        det.innerHTML = html;
+        det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
+        det.querySelector("#btnEdit").onclick = function(){ openEdit(d, q); };
+        det.querySelectorAll(".sec-btn").forEach(function(sb){
+          sb.onclick = function(){
+            var body = sb.parentElement.querySelector(".sec-body");
+            var open = body.hidden;
+            body.hidden = !open;
+            sb.textContent = (open ? "▾ " : "▸ ") + sb.textContent.slice(2);
+          };
+        });
+        renderMath(det);
+        det.setAttribute("data-loaded", "1");
+      });
+    }
+  } else {
+    det.hidden = true;
+    btn.textContent = "▼ 展开";
+  }
+}
+
+// 列表模式：题目盒子流
+function renderList(){
+  var main = qs("#mainContent");
   main.innerHTML = "";
-  var items = only ? [{pkg:"", q:only}] : visibleQuestions();
+  var items = visibleQuestions();
   if (items.length === 0) {
-    main.innerHTML = '<div class="empty">没有符合条件的题目 (' + objectLen(state.filters) + ' 个筛选条件)</div>';
+    main.innerHTML = '<div class="empty">没有符合条件的题目' + (state.favOnly ? "（收藏中）" : "") + "</div>";
     return;
   }
   items.forEach(function(it){
-    var q = it.q;
-    var card = document.createElement("div");
-    card.className = "card";
-    var meta = "";
-    var keys = ["type","difficulty","importance","source"];
-    keys.forEach(function(k){
-      var v = q.meta[k];
-      if (v) meta += '<span class="tag">' + esc(tagName(k)) + ": " + esc(v) + "</span>";
-    });
-    card.innerHTML = "<h3>" + esc(q.id) + (it.pkg ? ' <small style="color:#586069">' + esc(it.pkg) + "</small>" : "") + "</h3><div class='qmeta'>" + meta + "</div><div class='content'>" + esc(q.title) + "</div>";
-    var det = document.createElement("div");
-    det.className = "detail";
-    card.appendChild(det);
-    det.innerHTML = "加载详情…";
-    card.onclick = function(){ loadDetail(q, det, card); };
-    main.appendChild(card);
-    renderMath(card);
+    var box = buildBox(it, {onclick: function(b, q){ toggleExpand(b, q); }});
+    main.appendChild(box);
   });
+}
+
+// 双栏模式：左列表 + 右详情
+function renderSplit(){
+  var main = qs("#mainContent");
+  main.innerHTML = "";
+  var items = visibleQuestions();
+  if (items.length === 0) {
+    main.innerHTML = '<div class="empty">没有符合条件的题目</div>';
+    return;
+  }
+  var wrap = document.createElement("div");
+  wrap.className = "split-wrap";
+  var left = document.createElement("div");
+  left.className = "split-left";
+  var right = document.createElement("div");
+  right.className = "split-right";
+  right.innerHTML = '<span class="tip">← 点击左侧题目查看详情</span>';
+  var selKey = state.splitSel;
+  items.forEach(function(it, i){
+    var q = it.q;
+    var active = (selKey === (it.pkg + "|" + q.id));
+    if (i === 0 && !selKey) active = true;
+    var box = buildBox(it, {active: active});
+    box.querySelector(".exp-btn").style.display = "none";
+    box.onclick = function(){
+      state.splitSel = it.pkg + "|" + q.id;
+      document.querySelectorAll(".split-left .qbox").forEach(function(b){ b.classList.remove("active"); });
+      box.classList.add("active");
+      loadSplitDetail(right, q);
+    };
+    left.appendChild(box);
+    if (active) {
+      state.splitSel = it.pkg + "|" + q.id;
+      loadSplitDetail(right, q);
+    }
+  });
+  wrap.appendChild(left);
+  wrap.appendChild(right);
+  main.appendChild(wrap);
+}
+
+// 双栏右侧详情（完整展示，公式渲染）
+function loadSplitDetail(right, q){
+  fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
+    var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button></div>';
+    html += '<div class="qbox-head"><span class="qbox-id">' + esc(q.id) + "</span><span style='flex:1'></span>";
+    html += '<button class="fav-btn">' + (isFav(q) ? "⭐" : "☆") + "</button></div>";
+    html += metaTagsOf(d.meta || {});
+    if (d.prompt) html += "<div><b>题目</b><div class='content'>" + esc(d.prompt) + "</div></div>";
+    if (d.answer) html += "<div><b>答案</b><div class='content'>" + esc(d.answer) + "</div></div>";
+    if (d.explain) html += "<div><b>解析</b><div class='content'>" + esc(d.explain) + "</div></div>";
+    if (d.note) html += "<div><b>备注</b><div class='content'>" + esc(d.note) + "</div></div>";
+    right.innerHTML = html;
+    var fb = right.querySelector(".fav-btn");
+    if (fb) fb.onclick = function(){ toggleFav(q, this); };
+    var bo = right.querySelector("#btnOpen");
+    if (bo) bo.onclick = function(){ openLocal(q); };
+    var be = right.querySelector("#btnEdit");
+    if (be) be.onclick = function(){ openEdit(d, q); };
+    renderMath(right);
+  });
+}
+
+// 卡片模式：单题 + 前进后退
+function renderCard(){
+  var main = qs("#mainContent");
+  main.innerHTML = "";
+  var items = visibleQuestions();
+  if (items.length === 0) {
+    main.innerHTML = '<div class="empty">没有符合条件的题目</div>';
+    return;
+  }
+  if (state.cardIdx >= items.length) state.cardIdx = 0;
+  var it = items[state.cardIdx];
+  var q = it.q;
+  var box = buildBox(it);
+  var nav = document.createElement("div");
+  nav.className = "card-nav";
+  var prev = document.createElement("button"); prev.textContent = "◀ 上一题";
+  var cnt = document.createElement("span"); cnt.textContent = (state.cardIdx + 1) + " / " + items.length;
+  var next = document.createElement("button"); next.textContent = "下一题 ▶";
+  prev.onclick = function(){ state.cardIdx = (state.cardIdx - 1 + items.length) % items.length; renderCard(); };
+  next.onclick = function(){ state.cardIdx = (state.cardIdx + 1) % items.length; renderCard(); };
+  nav.appendChild(prev); nav.appendChild(cnt); nav.appendChild(next);
+  main.appendChild(box);
+  main.appendChild(nav);
+}
+
+// 选中题目（侧边栏点击）：按模式处理
+function selectQuestion(q){
+  if (state.mode === "card") {
+    var items = visibleQuestions();
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].q.id === q.id) { state.cardIdx = i; break; }
+    }
+    renderCard();
+  } else if (state.mode === "split") {
+    state.splitSel = q.id;
+    renderSplit();
+  } else {
+    var box = document.querySelector('.qbox[data-id="' + q.id + '"]');
+    if (box) {
+      box.scrollIntoView({block: "center"});
+      toggleExpand(box, q);
+    }
+  }
 }
 
 function objectLen(obj){ var n = 0; for (var k in obj) n++; return n; }
