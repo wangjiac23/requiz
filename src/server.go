@@ -169,6 +169,7 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/lists", apiListsHandler(store))
 	mux.HandleFunc("/api/lists/save", apiListsSaveHandler(store))
 	mux.HandleFunc("/api/export", apiExportHandler(store))
+	mux.HandleFunc("/api/export/open", apiExportOpenHandler(store))
 	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
@@ -757,6 +758,46 @@ func apiExportHandler(s *Store) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true, "path": path, "count": len(qs)})
+	}
+}
+
+// POST /api/export/open {path}：explorer 定位导出文件（仅限 output/ 目录内）
+func apiExportOpenHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Path   string `json:"path"`
+			Action string `json:"action"` // select=资源管理器定位 / open=默认程序打开
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.Path == "" {
+			http.Error(w, `{"error":"需要 path 字段"}`, http.StatusBadRequest)
+			return
+		}
+		abs, err := filepath.Abs(body.Path)
+		if err != nil {
+			http.Error(w, `{"error":"路径解析失败"}`, http.StatusInternalServerError)
+			return
+		}
+		outAbs, _ := filepath.Abs("output")
+		rel, err := filepath.Rel(outAbs, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			http.Error(w, `{"error":"只能操作 output 目录内的文件"}`, http.StatusForbidden)
+			return
+		}
+		var cmd *exec.Cmd
+		if body.Action == "open" {
+			cmd = exec.Command("cmd", "/c", "start", "", abs) // 默认程序打开
+		} else {
+			cmd = exec.Command("explorer.exe", "/select,", abs) // 资源管理器定位
+		}
+		if err := cmd.Start(); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
 	}
 }
 
@@ -1703,6 +1744,17 @@ function saveSelectedAsList(){
   });
 }
 
+// 操作导出文件（open=默认程序打开 / select=资源管理器定位）
+function openExportFile(p, action){
+  fetch("/api/export/open", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({path: p, action: action || "select"})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) alert(d.error || "操作失败");
+  });
+}
+
 // 导出弹窗
 function openExport(){
   var ids = Object.keys(state.selected);
@@ -1723,8 +1775,13 @@ function doExport(){
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({bank: state.bank, ids: ids, parts: parts, format: format})
   }).then(function(r){ return r.json(); }).then(function(d){
-    if (d.ok) qs("#exportMsg").textContent = "✅ 已导出 " + d.count + " 题 → " + d.path;
-    else qs("#exportMsg").textContent = "❌ " + (d.error || "导出失败");
+    if (d.ok) {
+      qs("#exportMsg").innerHTML = "✅ 已导出 " + d.count + " 题 → " + esc(d.path) + ' <button id="openExportFile">📂 打开</button> <button id="locateExportFile">📍 定位</button>';
+      var ob = qs("#openExportFile");
+      if (ob) ob.onclick = function(){ openExportFile(d.path, "open"); };
+      var lb = qs("#locateExportFile");
+      if (lb) lb.onclick = function(){ openExportFile(d.path, "select"); };
+    } else qs("#exportMsg").textContent = "❌ " + (d.error || "导出失败");
   });
 }
 

@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v1.5.1（CLI + Localhost 网页 + 导航分区 + 组卷导出）
+- 版本：v1.5.2（CLI + Localhost 网页 + 导航分区 + 组卷导出）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -96,6 +96,9 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 
 **v1.5.1（修订）**
 41. 修复收藏星标刷新后不显示：/api/favorites 带 bank 参数 + 补回 dir 字段，key 用 state.bank 统一
+
+**v1.5.2（修订）**
+42. 导出后文件操作：📂 打开（默认程序）/ 📍 定位（资源管理器 /select），仅限 output/ 目录（越权拒绝）
 
 ## 快速开始
 
