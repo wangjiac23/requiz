@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -143,6 +144,10 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/api/questions", apiQuestionsHandler(store))
 	mux.HandleFunc("/api/question", apiQuestionHandler(store))
 	mux.HandleFunc("/api/link", apiLinkHandler(store))
+	mux.HandleFunc("/api/open", apiOpenHandler(store))
+	mux.HandleFunc("/api/question/save", apiQuestionSaveHandler(store))
+	mux.HandleFunc("/api/reload", apiReloadHandler(store))
+	mux.Handle("/katex/", http.StripPrefix("/katex/", http.FileServer(http.Dir(katexDir()))))
 
 	addr := "127.0.0.1:" + port
 	fmt.Printf("requiz web   : http://%s/\n", addr)
@@ -181,7 +186,151 @@ func parseServeArgs(args []string) (dir, port string, err error) {
 	return
 }
 
-// ---------- 题目视图模型 ----------
+// katexDir 定位 KaTeX 静态资源目录（优先当前工作目录，其次可执行文件上级）
+func katexDir() string {
+	candidates := []string{"web/katex"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "web", "katex"))
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+	return "web/katex"
+}
+
+// ---------- V1.2.0 API：打开本地 / 编辑保存 / 刷新 ----------
+
+// apiOpenHandler POST /api/open {bank, id}：explorer 定位本地题目文件
+func apiOpenHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank string `json:"bank"`
+			ID   string `json:"id"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.ID == "" {
+			http.Error(w, `{"error":"需要 bank 与 id 字段"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		q, err := b.find(body.ID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		bankAbs, err := filepath.Abs(b.Dir)
+		if err != nil {
+			http.Error(w, `{"error":"题库目录解析失败"}`, http.StatusInternalServerError)
+			return
+		}
+		qAbs, err := filepath.Abs(q.Path)
+		if err != nil {
+			http.Error(w, `{"error":"文件路径解析失败"}`, http.StatusInternalServerError)
+			return
+		}
+		rel, err := filepath.Rel(bankAbs, qAbs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			http.Error(w, `{"error":"文件不在题库目录内，拒绝打开"}`, http.StatusForbidden)
+			return
+		}
+		cmd := exec.Command("explorer.exe", "/select,", qAbs)
+		if err := cmd.Start(); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// apiQuestionSaveHandler POST /api/question/save：编辑内容写回本地 md
+func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank    string `json:"bank"`
+			ID      string `json:"id"`
+			Prompt  string `json:"prompt"`
+			Answer  string `json:"answer"`
+			Explain string `json:"explain"`
+			Note    string `json:"note"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.ID == "" {
+			http.Error(w, `{"error":"需要 id 字段"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		q, err := b.find(body.ID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		q.Prompt = body.Prompt
+		q.Answer = body.Answer
+		q.Explain = body.Explain
+		q.Note = body.Note
+		if err := os.WriteFile(q.Path, []byte(serializeQuestion(q)), 0644); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// apiReloadHandler POST /api/reload：重新扫描题库目录（同步本地/网页改动）
+func apiReloadHandler(s *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Bank string `json:"bank"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"error":"body 解析失败"}`, http.StatusBadRequest)
+			return
+		}
+		b, err := s.bankByDir(body.Bank)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusNotFound)
+			return
+		}
+		nb, err := connectBank(b.Dir)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		s.mu.Lock()
+		if s.main.Dir == b.Dir {
+			s.main = nb
+		} else {
+			for i, l := range s.links {
+				if l.Dir == b.Dir {
+					s.links[i] = nb
+					break
+				}
+			}
+		}
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{"ok": true, "count": len(nb.Questions)})
+	}
+}
 
 type questSummary struct {
 	ID    string            `json:"id"`
@@ -442,6 +591,7 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>requiz</title>
+<link rel="stylesheet" href="/katex/katex.min.css">
 <style>{{.CSS}}</style>
 </head>
 <body>
@@ -451,6 +601,7 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <button id="toggleSidebar" title="隐藏侧边栏">☷</button>
     <button id="toggleFilters" title="隐藏筛选栏">⌄</button>
     <select id="bankSel" title="选择题库"></select>
+    <button id="reloadBtn" title="刷新题库（同步本地/网页改动）">⟳</button>
     <button id="settingsBtn" title="设置">⚙ 设置</button>
   </div>
 </header>
@@ -483,6 +634,26 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <div id="linkMsg" class="tip"></div>
   </div>
 </div>
+<div id="editModal">
+  <div class="modal-box">
+    <h3>编辑题目 <span id="editId" class="meta"></span></h3>
+    <label class="lbl">题干</label>
+    <textarea id="editPrompt" rows="5"></textarea>
+    <label class="lbl">答案</label>
+    <textarea id="editAnswer" rows="3"></textarea>
+    <label class="lbl">解析</label>
+    <textarea id="editExplain" rows="3"></textarea>
+    <label class="lbl">备注</label>
+    <textarea id="editNote" rows="2"></textarea>
+    <div id="editMsg" class="tip"></div>
+    <div class="modal-actions">
+      <button id="editSave">保存</button>
+      <button id="editCancel">取消</button>
+    </div>
+  </div>
+</div>
+<script src="/katex/katex.min.js"></script>
+<script src="/katex/contrib/auto-render.min.js"></script>
 <script>{{.AppJS}}</script>
 </body>
 </html>`))
@@ -567,6 +738,14 @@ pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-
 .empty{color:var(--muted);text-align:center;padding:40px}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
 #modal.show{display:flex}
+#editModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#editModal.show{display:flex}
+#editModal .modal-box{width:560px;max-width:92%}
+#editModal textarea{width:100%;font-family:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:6px;margin:2px 0 8px;resize:vertical}
+#editModal .lbl{font-size:12px;color:var(--muted)}
+.q-actions{display:flex;gap:8px;margin-bottom:10px}
+.q-actions button{font-size:12px;padding:4px 10px}
+#reloadBtn{padding:6px 10px}
 .modal-box{background:var(--panel);border-radius:10px;padding:20px;width:420px;max-width:90%}
 .modal-box h3{margin:0 0 8px}
 .tip{color:var(--muted);font-size:12px}
@@ -606,6 +785,9 @@ function init(){
   };
   qs("#pinSidebar").onclick = function(){ this.classList.toggle("pinned"); };
   qs("#pinFilters").onclick = function(){ this.classList.toggle("pinned"); };
+  qs("#reloadBtn").onclick = reloadBank;
+  qs("#editSave").onclick = saveEdit;
+  qs("#editCancel").onclick = closeEdit;
   loadBanks();
 }
 
@@ -834,15 +1016,91 @@ function objectLen(obj){ var n = 0; for (var k in obj) n++; return n; }
 
 function loadDetail(q, det, card){
   fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
-    var html = '';
+    var html = '<div class="q-actions">';
+    html += '<button id="btnOpen">📂 打开本地</button>';
+    html += '<button id="btnEdit">✏️ 编辑</button>';
+    html += '</div>';
     if (d.prompt) html += "<div><b>题目</b><pre>" + esc(d.prompt) + "</pre></div>";
     if (d.answer) html += "<div><b>答案</b><pre>" + esc(d.answer) + "</pre></div>";
     if (d.explain) html += "<div><b>解析</b><pre>" + esc(d.explain) + "</pre></div>";
     if (d.note) html += "<div><b>备注</b><pre>" + esc(d.note) + "</pre></div>";
     if (!html) html = '<span class="tip">（无更多内容）</span>';
     det.innerHTML = html;
+    det.querySelector("#btnOpen").onclick = function(){ openLocal(q); };
+    det.querySelector("#btnEdit").onclick = function(){ openEdit(d, q); };
+    // KaTeX 公式渲染
+    if (window.renderMathInElement) {
+      renderMathInElement(det, {
+        delimiters: [
+          {left: "$$", right: "$$", display: true},
+          {left: "$", right: "$", display: false},
+          {left: "\\\\(", right: "\\\\)", display: false},
+          {left: "\\[", right: "\\]", display: true}
+        ],
+        throwOnError: false
+      });
+    }
     card.classList.add("active");
   }).catch(function(){ det.innerHTML = '<span class="tip">加载失败</span>'; });
+}
+
+// 刷新题库：重新扫描目录（同步本地/网页改动）
+function reloadBank(){
+  fetch("/api/reload", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bank: state.bank})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) loadAll();
+  });
+}
+
+// 打开本地文件（资源管理器定位）
+function openLocal(q){
+  fetch("/api/open", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bank: state.bank, id: q.id})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) alert(d.error || "打开失败");
+  });
+}
+
+// 编辑弹窗
+var editing = null;
+function openEdit(d, q){
+  editing = q;
+  qs("#editId").textContent = q.id;
+  qs("#editPrompt").value = d.prompt || "";
+  qs("#editAnswer").value = d.answer || "";
+  qs("#editExplain").value = d.explain || "";
+  qs("#editNote").value = d.note || "";
+  qs("#editMsg").textContent = "";
+  qs("#editModal").classList.add("show");
+}
+function closeEdit(){ qs("#editModal").classList.remove("show"); }
+function saveEdit(){
+  if (!editing) return;
+  var body = {
+    bank: state.bank, id: editing.id,
+    prompt: qs("#editPrompt").value,
+    answer: qs("#editAnswer").value,
+    explain: qs("#editExplain").value,
+    note: qs("#editNote").value
+  };
+  fetch("/api/question/save", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      qs("#editMsg").textContent = "✅ 已保存";
+      closeEdit();
+      loadAll();
+    } else {
+      qs("#editMsg").textContent = "❌ " + (d.error || "保存失败");
+    }
+  });
 }
 
 function openSettings(){

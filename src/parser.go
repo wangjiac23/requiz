@@ -2,8 +2,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -133,4 +135,50 @@ func (q *Question) ID() string {
 		return id
 	}
 	return strings.TrimSuffix(q.File, ".md")
+}
+
+// serializeQuestion 将题目序列化为 YAML md 文件内容（供编辑保存写盘）
+func serializeQuestion(q *Question) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	// 固定顺序输出常用元数据，其余按字母序
+	order := []string{"app", "bank", "id", "path", "chapter", "grade", "difficulty", "importance", "source", "knowledge", "type"}
+	written := map[string]bool{}
+	for _, k := range order {
+		if v, ok := q.Meta[k]; ok {
+			fmt.Fprintf(&b, "%s: %s\n", k, v)
+			written[k] = true
+		}
+	}
+	keys := []string{}
+	for k := range q.Meta {
+		if !written[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s: %s\n", k, q.Meta[k])
+	}
+	b.WriteString("---\n\n")
+	writeSection := func(title, content string) {
+		if strings.TrimSpace(content) == "" {
+			return
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s\n\n", title, strings.TrimSpace(content))
+	}
+	writeSection("题目", q.Prompt)
+	writeSection("答案", q.Answer)
+	writeSection("解析", q.Explain)
+	writeSection("备注", q.Note)
+	// 其它自定义节（Extra）保持原样
+	keys2 := []string{}
+	for k := range q.Extra {
+		keys2 = append(keys2, k)
+	}
+	sort.Strings(keys2)
+	for _, k := range keys2 {
+		writeSection(k, q.Extra[k])
+	}
+	return b.String()
 }
