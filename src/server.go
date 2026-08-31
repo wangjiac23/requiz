@@ -383,7 +383,7 @@ func indexHandler(s *Store) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		indexTpl.Execute(w, indexData{Version: version, CSS: indexCSS, AppJS: indexJS})
+		indexTpl.Execute(w, indexData{CSS: indexCSS, AppJS: indexJS})
 	}
 }
 
@@ -432,9 +432,8 @@ type questDetailView struct {
 }
 
 type indexData struct {
-	Version string
-	CSS     template.JS
-	AppJS   template.JS
+	CSS   template.CSS
+	AppJS template.JS
 }
 
 var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
@@ -442,12 +441,12 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>requiz v{{.Version}}</title>
+<title>requiz</title>
 <style>{{.CSS}}</style>
 </head>
 <body>
 <header id="topbar">
-  <div class="brand">📚 requiz <small>v{{.Version}}</small></div>
+  <div class="brand">📚 requiz</div>
   <div class="bankbar">
     <select id="bankSel" title="选择题库"></select>
     <button id="settingsBtn" title="设置">⚙ 设置</button>
@@ -538,7 +537,8 @@ button:hover{background:var(--hover)}
 pre{white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px;font-size:14px;line-height:1.6}
 .detail{border-top:1px dashed var(--border);margin-top:10px;padding-top:8px}
 .empty{color:var(--muted);text-align:center;padding:40px}
-#modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100}
+#modal.show{display:flex}
 .modal-box{background:var(--panel);border-radius:10px;padding:20px;width:420px;max-width:90%}
 .modal-box h3{margin:0 0 8px}
 .tip{color:var(--muted);font-size:12px}
@@ -738,12 +738,12 @@ function loadDetail(q, det, card){
 }
 
 function openSettings(){
-  qs("#modal").hidden = false;
+  qs("#modal").classList.add("show");
   qs("#linkMsg").textContent = "";
   qs("#linkInput").value = "";
   qs("#linkInput").focus();
 }
-function closeSettings(){ qs("#modal").hidden = true; }
+function closeSettings(){ qs("#modal").classList.remove("show"); }
 
 function doLink(){
   var dir = qs("#linkInput").value.trim();

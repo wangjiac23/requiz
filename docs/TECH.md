@@ -87,6 +87,7 @@ requiz/
 - **v0.0.0** ✅：CLI 连接题库 + 读取/显示题目
 - **v1.0.0** ✅：CLI + Localhost Web（列表/详情 + JSON API）
 - **v1.1.0** ✅：多题库链接 + 三栏 Obsidian 风格 UI + 标签筛选
+- **v1.1.1** ✅（修订）：题库A 扩至 10 题 · 设置弹窗修复 · 去除页面版本号
 - **v2.0.0**：引入 Agent（组卷/批改/学情分析/pi 集成）
 
 ---
@@ -120,3 +121,8 @@ requiz/
    - `GET /api/questions?bank=&tag=&value=`：按元数据标签筛选
    - `GET /api/question?bank=&id=`：单题详情
 4. 服务端重构：单 bank 闭包 → `Store`（主库 + 链接库缓存），按目录或名称切换；兼容 v1.0.0 全部端点。
+
+### V1.1.1 修订
+1. 题库A 题目增至 10 题（新增 M002~M010，分 4 个章节包：集合/不等式/函数/指数对数）
+2. 设置弹窗修复：CSS 类型由 `template.JS` 改为 `template.CSS`（原 `ZgotmplZ` 导致样式全部未注入）；弹窗默认 `display:none`，点击 ⚙ 添加 `.show` 类弹出居中窗口
+3. 移除页面版本号显示（标题 + 顶栏 brand）

@@ -2,7 +2,7 @@
 
 > re · quiz —— 重复测验，再问一遍。给你一座趁手的题库。
 
-- 版本：v1.1.0（CLI + Localhost 网页 + 多题库 + 标签筛选）
+- 版本：v1.1.1（CLI + Localhost 网页 + 多题库 + 标签筛选）
 - 技术栈：Go + Obsidian Markdown + Agent(pi)
 - 运行环境：CLI + Localhost
 
@@ -31,6 +31,11 @@ requiz 是一个**题库管理系统**，不是题库平台。题目不是目的
 6. 三栏界面：顶部栏（设置 + 题库下拉）· 左侧边栏（题目包树）· 上边栏（标签筛选）
 7. 多题库链接：⚙ 设置添加链接题库，下拉切换，持久化到 `.requiz/config.yaml` 的 `links`
 8. 新 JSON API：/api/banks、/api/tree，/api/questions 支持 tag/value 筛选
+
+**v1.1.1（修订）**
+9. 题库A 增至 10 题（新增 9 题，分 4 个章节包）
+10. 设置改为弹出小窗口（修复 CSS 未注入 + 弹窗默认隐藏）
+11. 删除页面版本号显示
 
 ## 快速开始
 

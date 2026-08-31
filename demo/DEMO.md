@@ -1,4 +1,4 @@
-# requiz v1.1.0 演示
+# requiz v1.1.1 演示
 
 demo 演示区结构：从 `data/` 选取题目 → 组织成题库（如 `demo/题库A/`、`demo/题库B/`），题库目录内含 `.requiz/` 连接配置。data 只存原始题库，不加配置。
 
