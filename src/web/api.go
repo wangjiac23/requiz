@@ -79,6 +79,7 @@ func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
 			Answer  string            `json:"answer"`
 			Explain string            `json:"explain"`
 			Note    string            `json:"note"`
+			Links   string            `json:"links"` // V2.2.0 链接笔记
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil || body.ID == "" {
 			http.Error(w, `{"error":"需要 id 字段"}`, http.StatusBadRequest)
@@ -136,6 +137,8 @@ func apiQuestionSaveHandler(s *Store) http.HandlerFunc {
 		q.Answer = body.Answer
 		q.Explain = body.Explain
 		q.Note = body.Note
+		q.Links = body.Links
+		q.Links = body.Links
 		if err := os.WriteFile(q.Path, []byte(parser.SerializeQuestion(q)), 0644); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return

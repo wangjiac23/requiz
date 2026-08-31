@@ -12,6 +12,7 @@ type Question struct {
 	Answer  string            // ### 答案
 	Explain string            // ### 解析
 	Note    string            // ### 备注
+	Links   string            // ## 链接笔记（V2.2.0：Obsidian 笔记链接）
 	Extra   map[string]string // 未识别的其它节（保留）
 }
 

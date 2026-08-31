@@ -997,7 +997,7 @@ function toggleExpand(box, q){
       det.innerHTML = '<span class="tip">加载中…</span>';
       fetch("/api/question?bank=" + encodeURIComponent(state.bank) + "&id=" + encodeURIComponent(q.id)).then(function(r){ return r.json(); }).then(function(d){
         var html = '<div class="q-actions"><button id="btnOpen">📂 打开本地</button><button id="btnEdit">✏️ 编辑</button><button id="btnImg">📷 图片</button></div>';
-        var secs = [["答案", d.answer], ["解析", d.explain], ["备注", d.note]];
+        var secs = [["答案", d.answer], ["解析", d.explain], ["备注", d.note], ["链接笔记", d.links]];
         secs.forEach(function(s){
           if (s[1]) html += '<div class="sec"><button class="sec-btn" data-title="' + esc(s[0]) + '">▸ ' + esc(s[0]) + '</button><div class="sec-body" hidden><div class="content">' + esc(s[1]) + "</div></div></div>";
         });
@@ -1097,6 +1097,7 @@ function loadSplitDetail(right, q){
     if (d.answer) html += "<div><b>答案</b><div class='content'>" + mdImages(esc(d.answer), state.bank) + "</div></div>";
     if (d.explain) html += "<div><b>解析</b><div class='content'>" + mdImages(esc(d.explain), state.bank) + "</div></div>";
     if (d.note) html += "<div><b>备注</b><div class='content'>" + mdImages(esc(d.note), state.bank) + "</div></div>";
+    if (d.links) html += "<div><b>链接笔记</b><div class='content'>" + mdImages(esc(d.links), state.bank) + "</div></div>";
     right.innerHTML = html;
     var fb = right.querySelector(".fav-btn");
     if (fb) fb.onclick = function(){ toggleFav(q, this); };
@@ -1237,6 +1238,7 @@ function openEdit(d, q){
   qs("#editAnswer").value = d.answer || "";
   qs("#editExplain").value = d.explain || "";
   qs("#editNote").value = d.note || "";
+  qs("#editLinks").value = d.links || "";
   qs("#editMsg").textContent = "";
   // 异步加载字段已知值后构建元数据行
   fetch("/api/meta-values?bank=" + encodeURIComponent(state.bank)).then(function(r){ return r.json(); }).then(function(values){

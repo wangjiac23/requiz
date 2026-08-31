@@ -55,6 +55,7 @@ func ParseQuestion(path string) (*model.Question, error) {
 		"答案": {},
 		"解析": {},
 		"备注": {},
+		"链接笔记": {}, // V2.2.0：Obsidian 笔记链接
 	}
 	other := map[string]*[]string{}
 	cur := ""
@@ -104,6 +105,7 @@ func ParseQuestion(path string) (*model.Question, error) {
 	q.Answer = join(*sections["答案"])
 	q.Explain = join(*sections["解析"])
 	q.Note = join(*sections["备注"])
+	q.Links = join(*sections["链接笔记"])
 	for k, v := range other {
 		q.Extra[k] = join(*v)
 	}
@@ -144,6 +146,7 @@ func SerializeQuestion(q *model.Question) string {
 	writeSection("答案", q.Answer)
 	writeSection("解析", q.Explain)
 	writeSection("备注", q.Note)
+	writeSection("链接笔记", q.Links)
 	// 其它自定义节（Extra）保持原样
 	keys2 := []string{}
 	for k := range q.Extra {

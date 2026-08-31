@@ -112,6 +112,7 @@ requiz/
 - **v1.8.0** ✅：图片及附件（题库/image/题目名/ 目录约定 + 渲染 + 上传）
 - **v2.0.0** ✅：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.1** ✅（修订）：打开本地智能判断（库内 Obsidian / 库外资源管理器）+ 定位失败资源管理器兜底
+- **v2.2.0** ✅：知识库、题库联动（题目链接笔记 `## 链接笔记` + Obsidian 反链）
 - **v2.0.0** 🚧：requiz for Obsidian（插件：新标签页 iframe 复用 localhost 全部功能）
 - **v2.1.0** 📝：分布式题目
 - **v2.2.0** 📝：知识库、题库联动
@@ -333,4 +334,14 @@ requiz/
 
 ### V2.0.0 修订
 1. v2.1.1 打开本地智能化：requiz 前端 iframe 环境 postMessage（`requiz-open` 带路径）；插件 `openInObsidian` 先判断路径是否在当前库内（`getBasePath`）——库内 `getAbstractFileByPath` 多级匹配 + Obsidian 新标签页打开；库外/定位失败用 `explorer.exe /select` 资源管理器兜底（不再报「找不到文件」）
+
+---
+
+## V2.2.0（知识库、题库联动：链接笔记）
+
+1. 题目格式新增 `## 链接笔记` 章节（与题目/答案/解析/备注同级），内容为 Obsidian 双链 `[[笔记名]]` 或 `[[路径|别名]]`
+2. parser：`Question` 新增 `Links` 字段，`## 链接笔记` 解析到 Links（serialize 保留输出）；questionJSON/toJSON 透传
+3. 前端：详情（展开/双栏）渲染「链接笔记」区；编辑弹窗新增链接笔记 textarea（保存写回 md）
+4. Obsidian 反链：题目 md 中 `[[笔记名]]` 由 Obsidian 建立双向链接，右边栏「反向链接」可见
+5. demo：M001 链接 `[[集合的基本概念]]`，配套笔记 `demo/题库A/笔记/集合的基本概念.md`（普通笔记不带 requiz 元数据，不会被当题目）
 5. 兼容：requiz 服务零改动；插件仅做 iframe 集成

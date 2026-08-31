@@ -121,6 +121,7 @@ type questionJSON struct {
 	Answer  string            `json:"answer,omitempty"`
 	Explain string            `json:"explain,omitempty"`
 	Note    string            `json:"note,omitempty"`
+	Links   string            `json:"links,omitempty"` // V2.2.0
 	Extra   map[string]string `json:"extra,omitempty"`
 }
 
@@ -135,6 +136,7 @@ func toJSON(q *model.Question) questionJSON {
 		Answer:  q.Answer,
 		Explain: q.Explain,
 		Note:    q.Note,
+		Links:   q.Links,
 		Extra:   q.Extra,
 	}
 }
