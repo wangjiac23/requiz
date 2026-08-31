@@ -454,11 +454,14 @@ var indexTpl = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <button id="settingsBtn" title="设置">⚙ 设置</button>
   </div>
 </header>
-<div id="filters"></div>
+<div id="filtersWrap">
+  <div id="filters"></div>
+  <div id="filtersResizer" title="拖拽调整高度（拖到最矮隐藏）"></div>
+</div>
 <div id="body">
   <div id="sidebarWrap">
     <aside id="sidebar"></aside>
-    <div id="resizer" title="拖拽调整宽度（双击快速隐藏）"></div>
+    <div id="resizer" title="拖拽调整宽度（拖到最窄隐藏）"></div>
   </div>
   <main id="main"><div class="empty">加载中…</div></main>
 </div>
@@ -520,7 +523,11 @@ select,input,button{font-family:inherit;font-size:13px}
 #bankSel{width:220px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel)}
 button{padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--panel);cursor:pointer}
 button:hover{background:var(--hover)}
-#filters{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);align-items:center}
+#filtersWrap{display:flex;flex-direction:column}
+#filtersWrap.hidden{display:none}
+#filters{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px;background:var(--panel);align-items:center;overflow-y:auto}
+#filtersResizer{height:5px;cursor:row-resize;flex-shrink:0;background:transparent}
+#filtersResizer:hover,#filtersResizer.active{background:var(--accent-bg)}
 #filters .f-item{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px}
 #filters select{max-width:150px;padding:4px 6px;border:1px solid var(--border);border-radius:6px}
 #filters .clear{border:none;background:none;color:var(--accent);cursor:pointer;font-size:12px}
@@ -530,7 +537,6 @@ button:hover{background:var(--hover)}
 #sidebar{width:260px;min-width:120px;max-width:480px;background:var(--sidebar);border-right:1px solid var(--border);overflow-y:auto;padding:8px 6px}
 #resizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent}
 #resizer:hover,#resizer.active{background:var(--accent-bg)}
-#filters.hidden{display:none}
 #main{flex:1;overflow-y:auto;padding:16px}
 .pkg{font-size:13px}
 .pkg-head{display:flex;align-items:center;gap:4px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--text);font-weight:600}
@@ -582,16 +588,16 @@ function init(){
     this.title = h ? "显示侧边栏" : "隐藏侧边栏";
   };
   qs("#toggleFilters").onclick = function(){
-    var h = qs("#filters").classList.toggle("hidden");
+    var h = qs("#filtersWrap").classList.toggle("hidden");
     this.textContent = h ? "⌃" : "⌄";
     this.title = h ? "显示筛选栏" : "隐藏筛选栏";
   };
   loadBanks();
 }
 
-// 侧边栏拖拽调宽（双击快速隐藏）
+// 侧边栏拖拽调宽（拖到最窄自动隐藏）
 (function(){
-  var resizer = qs("#resizer"), sb = qs("#sidebar");
+  var resizer = qs("#resizer"), sb = qs("#sidebar"), wrap = qs("#sidebarWrap");
   var sx = 0, sw = 0;
   resizer.addEventListener("mousedown", function(e){
     sx = e.clientX; sw = sb.offsetWidth;
@@ -602,7 +608,13 @@ function init(){
   });
   function onMove(e){
     var w = sw + (e.clientX - sx);
-    if (w < 120) w = 120;
+    if (w < 100) {
+      wrap.classList.add("hidden");
+      qs("#toggleSidebar").textContent = "☰";
+      qs("#toggleSidebar").title = "显示侧边栏";
+      onUp();
+      return;
+    }
     if (w > 480) w = 480;
     sb.style.width = w + "px";
   }
@@ -611,10 +623,36 @@ function init(){
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
   }
-  resizer.addEventListener("dblclick", function(){
-    var h = qs("#sidebarWrap").classList.toggle("hidden");
-    qs("#toggleSidebar").textContent = h ? "☰" : "☷";
+})();
+
+// 筛选栏拖拽调高（拖到最矮自动隐藏）
+(function(){
+  var resizer = qs("#filtersResizer"), f = qs("#filters"), wrap = qs("#filtersWrap");
+  var sy = 0, sh = 0;
+  resizer.addEventListener("mousedown", function(e){
+    sy = e.clientY; sh = f.offsetHeight;
+    resizer.classList.add("active");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    e.preventDefault();
   });
+  function onMove(e){
+    var h = sh + (e.clientY - sy);
+    if (h < 40) {
+      wrap.classList.add("hidden");
+      qs("#toggleFilters").textContent = "⌃";
+      qs("#toggleFilters").title = "显示筛选栏";
+      onUp();
+      return;
+    }
+    if (h > 160) h = 160;
+    f.style.height = h + "px";
+  }
+  function onUp(){
+    resizer.classList.remove("active");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
 })();
 
 function loadBanks(){
